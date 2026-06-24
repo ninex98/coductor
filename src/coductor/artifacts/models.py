@@ -214,6 +214,7 @@ class IntegrationData(StrictModel):
     status: str
     reason: str
     merged_tasks: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
 
 
 class GateResultData(StrictModel):

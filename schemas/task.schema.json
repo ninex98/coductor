@@ -76,6 +76,41 @@
       "title": "ArtifactType",
       "type": "string"
     },
+    "ContractArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "json_schema",
+            "openapi",
+            "event_schema",
+            "type_definition"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "producer_task_id": {
+          "title": "Producer Task Id",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "sha256",
+        "producer_task_id"
+      ],
+      "title": "ContractArtifact",
+      "type": "object"
+    },
     "Producer": {
       "additionalProperties": false,
       "properties": {
@@ -119,6 +154,13 @@
             "type": "string"
           },
           "title": "Allowed Paths",
+          "type": "array"
+        },
+        "contracts": {
+          "items": {
+            "$ref": "#/$defs/ContractArtifact"
+          },
+          "title": "Contracts",
           "type": "array"
         },
         "depends_on": {

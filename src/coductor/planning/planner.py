@@ -141,3 +141,71 @@ def create_pipeline_plan(
         },
     ).validate(plan)
     return plan
+
+
+def create_parallel_plan(
+    spec: SpecificationData,
+    base_commit: str,
+    reasoning: list[str],
+) -> ExecutionPlanData:
+    criteria_ids = [
+        criterion.id
+        for criterion in spec.acceptance_criteria
+        if criterion.priority == "required"
+    ]
+    objective = spec.objective.lower()
+    safe_docs_examples = (
+        ("文档" in objective and "示例" in objective)
+        or ("docs" in objective and "examples" in objective)
+    )
+    first_paths = ["docs/**"] if safe_docs_examples else ["src/**"]
+    second_paths = ["examples/**"] if safe_docs_examples else ["src/coductor/**"]
+    first_task = PlanTask(
+        id="T001",
+        title="并行完成第一组独立变更",
+        task_type=TaskType.INTEGRATED_IMPLEMENTATION,
+        role="builder",
+        depends_on=[],
+        consumes=["02_spec.yaml", "01_repository_snapshot.yaml"],
+        produces=["tasks/T001/worker_result.yaml"],
+        allowed_paths=first_paths,
+        forbidden_paths=[".env*", "**/secrets/**", "**/production/**"],
+        acceptance_criteria=[],
+        quality_gates=["unit_tests"],
+        sandbox=SandboxMode.WORKSPACE_WRITE,
+    )
+    second_task = PlanTask(
+        id="T002",
+        title="并行完成第二组独立变更",
+        task_type=TaskType.INTEGRATED_IMPLEMENTATION,
+        role="builder",
+        depends_on=[],
+        consumes=["02_spec.yaml", "01_repository_snapshot.yaml"],
+        produces=["tasks/T002/worker_result.yaml"],
+        allowed_paths=second_paths,
+        forbidden_paths=[".env*", "**/secrets/**", "**/production/**"],
+        acceptance_criteria=criteria_ids,
+        quality_gates=["unit_tests"],
+        sandbox=SandboxMode.WORKSPACE_WRITE,
+    )
+    plan = ExecutionPlanData(
+        strategy=ExecutionStrategy.PARALLEL,
+        strategy_reasoning=[
+            *reasoning,
+            "并行候选任务必须声明互不重叠的 allowed_paths",
+            "并行批次不允许在同一批内生产并消费契约",
+        ],
+        base_commit=base_commit,
+        tasks=[first_task, second_task],
+        graph={"edges": []},
+    )
+    plan.validation = PlanValidator(
+        acceptance_criteria=spec.acceptance_criteria,
+        produced_artifacts={
+            "02_spec.yaml",
+            "01_repository_snapshot.yaml",
+            "tasks/T001/worker_result.yaml",
+            "tasks/T002/worker_result.yaml",
+        },
+    ).validate(plan)
+    return plan

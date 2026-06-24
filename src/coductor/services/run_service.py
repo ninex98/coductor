@@ -15,7 +15,6 @@ from coductor.artifacts.models import (
     FileReference,
     GateReportData,
     GoalData,
-    IntegrationData,
     PlanTask,
     Producer,
     RepairRequestData,
@@ -49,11 +48,13 @@ from coductor.gates.models import QualityGate
 from coductor.gates.runner import GateRunner
 from coductor.planning.planner import (
     choose_strategy,
+    create_parallel_plan,
     create_pipeline_plan,
     create_solo_plan,
 )
 from coductor.prompts.renderer import render_worker_prompt
 from coductor.repository.inspector import RepositoryInspector
+from coductor.repository.merge import build_integration_data
 from coductor.services.evidence_service import EvidenceService
 from coductor.storage.database import Database
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
@@ -119,6 +120,20 @@ class RunService:
         self.save_checkpoint(state)
         plan = self._write_plan(repo, run_id, spec, snapshot, requested_mode)
         state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
+        if not plan.data.validation.valid:
+            state.status = RunStatus.HUMAN_REQUIRED
+            state.current_stage = "human_required"
+            state.last_error = "plan validation failed"
+            self._store_run(state, run_dir)
+            self.save_checkpoint(state)
+            first_error = plan.data.validation.errors[0]
+            return RunResult(
+                run_id=run_id,
+                status=state.status,
+                run_dir=run_dir.as_posix(),
+                repair_attempts=state.repair_attempts,
+                message=f"plan validation failed: {first_error}",
+            )
         state.current_stage = "materialize_tasks"
         self.save_checkpoint(state)
         executed_tasks = self._execute_plan_tasks(repo, run_id, plan, state)
@@ -139,7 +154,7 @@ class RunService:
         completed_task_ids = [task_id for task_id, _handle in executed_tasks]
         state.current_stage = "integrate_changes"
         self.save_checkpoint(state)
-        self._write_integration(repo, run_id, plan)
+        self._write_integration(repo, run_id, plan, completed_task_ids)
         state.artifacts["04_integration"] = "04_integration.yaml"
         state.current_stage = "run_quality_gates"
         self.save_checkpoint(state)
@@ -419,11 +434,20 @@ class RunService:
         requested_mode: ExecutionMode,
     ) -> ArtifactEnvelope[Any]:
         decision = choose_strategy(spec.data.objective, requested_mode=requested_mode)
-        data = (
-            create_pipeline_plan(spec.data, snapshot.data.base_commit, decision.reasoning)
-            if decision.strategy == ExecutionStrategy.PIPELINE
-            else create_solo_plan(spec.data, snapshot.data.base_commit)
-        )
+        if decision.strategy == ExecutionStrategy.PIPELINE:
+            data = create_pipeline_plan(
+                spec.data,
+                snapshot.data.base_commit,
+                decision.reasoning,
+            )
+        elif decision.strategy == ExecutionStrategy.PARALLEL:
+            data = create_parallel_plan(
+                spec.data,
+                snapshot.data.base_commit,
+                decision.reasoning,
+            )
+        else:
+            data = create_solo_plan(spec.data, snapshot.data.base_commit)
         envelope = self._envelope(
             run_id=run_id,
             artifact_type=ArtifactType.EXECUTION_PLAN,
@@ -639,17 +663,20 @@ class RunService:
         repo: ArtifactRepository,
         run_id: str,
         plan: ArtifactEnvelope[Any],
+        completed_task_ids: list[str],
     ) -> None:
+        data = build_integration_data(plan.data.strategy, completed_task_ids)
         envelope = self._envelope(
             run_id=run_id,
             artifact_type=ArtifactType.INTEGRATION,
             artifact_id_prefix="art_integration",
-            status=ArtifactStatus.SKIPPED,
-            producer=Producer(kind=ProducerKind.SYSTEM, name="integration-manager"),
-            data=IntegrationData(
-                status="skipped",
-                reason="solo strategy does not require multi-worktree integration",
+            status=(
+                ArtifactStatus.SKIPPED
+                if data.status == "skipped"
+                else ArtifactStatus.COMPLETE
             ),
+            producer=Producer(kind=ProducerKind.SYSTEM, name="integration-manager"),
+            data=data,
             inputs=[ArtifactInput.model_validate(repo.input_for("03_execution_plan.yaml", plan))],
         )
         repo.write("04_integration.yaml", envelope)

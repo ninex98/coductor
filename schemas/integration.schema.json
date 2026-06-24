@@ -79,6 +79,13 @@
     "IntegrationData": {
       "additionalProperties": false,
       "properties": {
+        "conflicts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Conflicts",
+          "type": "array"
+        },
         "merged_tasks": {
           "items": {
             "type": "string"
