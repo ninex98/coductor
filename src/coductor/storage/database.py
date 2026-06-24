@@ -74,6 +74,17 @@ class Database:
             return None
         return {"run_id": row[0], "status": row[1], "run_dir": row[2], "updated_at": row[3]}
 
+    def update_run_status(self, run_id: str, status: str, updated_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                update runs
+                set status = ?, updated_at = ?
+                where run_id = ?
+                """,
+                (status, updated_at, run_id),
+            )
+
     def latest_run(self) -> dict[str, str] | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -94,6 +105,22 @@ class Database:
                 "insert into events(run_id, stage, message, created_at) values (?, ?, ?, ?)",
                 (run_id, stage, message, created_at),
             )
+
+    def list_events(self, run_id: str) -> list[dict[str, str]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select stage, message, created_at
+                from events
+                where run_id = ?
+                order by id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [
+            {"stage": row[0], "message": row[1], "created_at": row[2]}
+            for row in rows
+        ]
 
     def save_checkpoint(
         self,

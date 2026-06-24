@@ -13,6 +13,7 @@ from coductor.artifacts.serializer import dump_yaml
 from coductor.config.loader import discover_config, load_config, write_config
 from coductor.constants import CODUCTOR_DIR, VERSION
 from coductor.domain.enums import ExecutionMode
+from coductor.services.report_service import CONTROL_STATUS, ReportService, RunReportError
 from coductor.services.run_service import RunService
 from coductor.storage.database import Database
 
@@ -49,6 +50,23 @@ def _root(path: str | Path = ".") -> Path:
 
 def _db(root: Path) -> Database:
     return Database(root / CODUCTOR_DIR / "coductor.sqlite3")
+
+
+def _utc_now() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _report_service(root: Path) -> ReportService:
+    return ReportService(_db(root))
+
+
+def _exit_with_report_error(service: ReportService, error: RunReportError) -> None:
+    _print(service.failure(error))
+    if typer is not None:
+        raise typer.Exit(code=1) from error
+    raise SystemExit(1) from error
 
 
 def init_project(path: str = ".") -> None:
@@ -135,6 +153,68 @@ def report_run(run_id: str) -> None:
     _print(report.read_text(encoding="utf-8"))
 
 
+def artifacts_run(run_id: str) -> None:
+    root = _root(".")
+    service = _report_service(root)
+    try:
+        _print(service.artifacts(run_id))
+    except RunReportError as error:
+        _exit_with_report_error(service, error)
+
+
+def logs_run(run_id: str) -> None:
+    root = _root(".")
+    service = _report_service(root)
+    try:
+        _print(service.logs(run_id))
+    except RunReportError as error:
+        _exit_with_report_error(service, error)
+
+
+def explain_run(run_id: str) -> None:
+    root = _root(".")
+    service = _report_service(root)
+    try:
+        _print(service.explain(run_id))
+    except RunReportError as error:
+        _exit_with_report_error(service, error)
+
+
+def control_run(run_id: str, command: str) -> None:
+    root = _root(".")
+    db = _db(root)
+    service = ReportService(db)
+    try:
+        service.run_context(run_id, command)
+    except RunReportError as error:
+        _exit_with_report_error(service, error)
+    status = CONTROL_STATUS[command]
+    now = _utc_now()
+    db.update_run_status(run_id, status, now)
+    db.add_event(run_id, command, f"{command} requested by cli", now)
+    _print(service.control_result(run_id, command))
+
+
+def approve_run(run_id: str) -> None:
+    control_run(run_id, "approve")
+
+
+def pause_run(run_id: str) -> None:
+    control_run(run_id, "pause")
+
+
+def stop_run(run_id: str) -> None:
+    control_run(run_id, "stop")
+
+
+def verify_run(run_id: str) -> None:
+    control_run(run_id, "verify")
+
+
+def review_run(run_id: str) -> None:
+    control_run(run_id, "review")
+
+
 def doctor() -> None:
     root = _root(".")
     config_path = root / "coductor.yaml"
@@ -197,6 +277,38 @@ if typer is not None:
     def report_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         report_run(run_id)
 
+    @app.command("artifacts")  # type: ignore[untyped-decorator]
+    def artifacts_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        artifacts_run(run_id)
+
+    @app.command("logs")  # type: ignore[untyped-decorator]
+    def logs_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        logs_run(run_id)
+
+    @app.command("explain")  # type: ignore[untyped-decorator]
+    def explain_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        explain_run(run_id)
+
+    @app.command("approve")  # type: ignore[untyped-decorator]
+    def approve_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        approve_run(run_id)
+
+    @app.command("pause")  # type: ignore[untyped-decorator]
+    def pause_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        pause_run(run_id)
+
+    @app.command("stop")  # type: ignore[untyped-decorator]
+    def stop_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        stop_run(run_id)
+
+    @app.command("verify")  # type: ignore[untyped-decorator]
+    def verify_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        verify_run(run_id)
+
+    @app.command("review")  # type: ignore[untyped-decorator]
+    def review_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        review_run(run_id)
+
     @app.command("doctor")  # type: ignore[untyped-decorator]
     def doctor_command() -> None:
         doctor()
@@ -221,6 +333,15 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     resume_parser.add_argument("run_id")
     report_parser = sub.add_parser("report")
     report_parser.add_argument("run_id")
+    artifacts_parser = sub.add_parser("artifacts")
+    artifacts_parser.add_argument("run_id")
+    logs_parser = sub.add_parser("logs")
+    logs_parser.add_argument("run_id")
+    explain_parser = sub.add_parser("explain")
+    explain_parser.add_argument("run_id")
+    for command in ["approve", "pause", "stop", "verify", "review"]:
+        parser = sub.add_parser(command)
+        parser.add_argument("run_id")
     sub.add_parser("doctor")
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -235,6 +356,14 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
         resume_run(args.run_id)
     elif args.command == "report":
         report_run(args.run_id)
+    elif args.command == "artifacts":
+        artifacts_run(args.run_id)
+    elif args.command == "logs":
+        logs_run(args.run_id)
+    elif args.command == "explain":
+        explain_run(args.run_id)
+    elif args.command in {"approve", "pause", "stop", "verify", "review"}:
+        control_run(args.run_id, args.command)
     elif args.command == "doctor":
         doctor()
 
