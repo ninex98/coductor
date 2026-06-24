@@ -37,6 +37,12 @@ Phase 1 由 `RunService` 执行这个垂直切片，并通过 SQLite workflow ch
 
 `auto` 模式默认生成 `solo` 计划。`pipeline` 和 `parallel` 的数据模型和验证器已经存在，但执行器暂不伪造成功。并行计划必须通过依赖图、验收覆盖、上游 Artifact、写路径冲突和策略理由检查。
 
+## Backend Boundary
+
+`src/coductor/backends/factory.py` 负责所有 Backend 选择。`fake` 是测试和离线 smoke 的确定性实现；`codex_sdk` 保留 SDK 配置边界；当 SDK 不可用且配置 fallback 为 `codex_exec` 时，factory 会降级到 CLI backend。
+
+`CodexExecBackend` 使用 list-based `subprocess.run()`，prompt 通过 stdin 传入，命令显式包含 `--sandbox`、`--output-schema` 和 `--json`，避免 shell 拼接和隐式默认值。
+
 ## 安全
 
 默认配置关闭网络、Git push、PR 创建和生产路径访问。质量门命令来自 `coductor.yaml`，使用 `shlex.split` 执行，不拼接不可信 shell 字符串。

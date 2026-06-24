@@ -28,9 +28,7 @@ from coductor.artifacts.models import (
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.validator import ArtifactLineageValidator
 from coductor.backends.base import CodingBackend, WorkerHandle, WorkerRequest
-from coductor.backends.codex_exec import CodexExecBackend
-from coductor.backends.codex_sdk import CodexSdkBackend
-from coductor.backends.fake import FakeCodingBackend
+from coductor.backends.factory import create_backend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import (
     ArtifactStatus,
@@ -260,11 +258,7 @@ class RunService:
         return paths
 
     def _backend_from_config(self) -> CodingBackend:
-        if self.config.backend.provider == "fake":
-            return FakeCodingBackend()
-        if self.config.backend.provider == "codex_exec":
-            return CodexExecBackend()
-        return CodexSdkBackend()
+        return create_backend(self.config)
 
     def _envelope(
         self,

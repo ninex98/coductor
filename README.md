@@ -23,11 +23,13 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 - `coductor init`、`run`、`status`、`show`、`resume`、`report`、`doctor`；
 - 仓库扫描、模拟 Spec、solo Plan、Plan Validator；
 - `FakeCodingBackend` 离线端到端运行；
+- Backend Factory：测试使用 fake，SDK 不可用时按配置降级到 `codex exec`；
+- `codex exec` fallback 使用显式 sandbox、JSONL 输出和 JSON Schema 响应约束；
 - 质量门执行、失败指纹、有限修复循环；
 - 独立 Reviewer Worker 和 Evidence Bundle；
 - SQLite run/event 索引。
 
-LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后，并提供无依赖 fallback，方便在缺少依赖的环境中做基础 smoke check。
+LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后：`fake` 用于离线验证，`codex_sdk` 保持 SDK 边界，SDK 缺失且配置允许时自动 fallback 到 `codex_exec`。
 
 `resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式和阶段状态。恢复前会校验已有 Artifact 链路，检测到 hash 或 revision 不一致时进入 `human_required`，避免直接覆盖可疑证据。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`；后续会把各阶段副作用继续迁入薄节点，并接入 LangGraph 原生 SQLite saver。
 

@@ -7,11 +7,15 @@ clear error when the SDK is not installed, allowing config fallback to `codex ex
 from __future__ import annotations
 
 from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
+from coductor.config.models import BackendConfig
 from coductor.domain.enums import WorkerStatus
 from coductor.exceptions import BackendUnavailableError
 
 
 class CodexSdkBackend:
+    def __init__(self, config: BackendConfig | None = None) -> None:
+        self.config = config
+
     def start_worker(self, request: WorkerRequest) -> WorkerHandle:
         raise BackendUnavailableError(
             "openai-codex Python SDK is not installed in this environment",
