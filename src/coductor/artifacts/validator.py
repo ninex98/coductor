@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+from coductor.artifacts.hashing import file_sha256
+from coductor.artifacts.models import ArtifactEnvelope, TaskData
 from coductor.artifacts.repository import ArtifactRepository
+from coductor.domain.enums import ArtifactType
 
 
 class ArtifactLineageValidator:
@@ -24,4 +28,23 @@ class ArtifactLineageValidator:
                 errors.append(f"revision mismatch for {input_ref.path}")
             if upstream.metadata.content_sha256 != input_ref.sha256:
                 errors.append(f"hash mismatch for {input_ref.path}")
+        errors.extend(self._validate_contract_inputs(envelope))
+        return errors
+
+    def _validate_contract_inputs(self, envelope: ArtifactEnvelope[Any]) -> list[str]:
+        if envelope.artifact_type != ArtifactType.TASK:
+            return []
+        task = TaskData.model_validate(envelope.data)
+        errors: list[str] = []
+        for contract in task.contracts:
+            path = self.repo.root / contract.path
+            if not path.exists():
+                errors.append(f"contract missing {contract.path}")
+                continue
+            actual = file_sha256(path)
+            if actual != contract.sha256:
+                errors.append(
+                    f"contract hash mismatch for {contract.path}: "
+                    f"expected {contract.sha256}, got {actual}"
+                )
         return errors

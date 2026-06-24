@@ -31,6 +31,8 @@ from coductor.artifacts.validator import ArtifactLineageValidator
 from coductor.backends.base import CodingBackend, WorkerHandle, WorkerRequest
 from coductor.backends.factory import create_backend
 from coductor.config.models import CoductorConfig
+from coductor.contracts.models import ContractArtifact
+from coductor.contracts.repository import ContractRepository
 from coductor.domain.enums import (
     ArtifactStatus,
     ArtifactType,
@@ -447,8 +449,14 @@ class RunService:
         state: WorkflowState,
     ) -> list[tuple[str, WorkerHandle]]:
         executed: list[tuple[str, WorkerHandle]] = []
+        contracts: dict[str, ContractArtifact] = {}
         for plan_task in self._tasks_in_dependency_order(plan.data.tasks):
-            task = self._write_task(repo, run_id, plan, plan_task)
+            task_contracts = [
+                contract
+                for path, contract in contracts.items()
+                if path in plan_task.consumes
+            ]
+            task = self._write_task(repo, run_id, plan, plan_task, task_contracts)
             task_path = f"tasks/{plan_task.id}/task.yaml"
             state.artifacts[f"task_{plan_task.id}"] = task_path
             state.current_stage = "dispatch_tasks"
@@ -460,7 +468,29 @@ class RunService:
             )
             self.save_checkpoint(state)
             executed.append((plan_task.id, worker_handle))
+            contracts.update(self._materialize_contracts(repo, plan_task))
         return executed
+
+    def _materialize_contracts(
+        self,
+        repo: ArtifactRepository,
+        plan_task: PlanTask,
+    ) -> dict[str, ContractArtifact]:
+        materialized: dict[str, ContractArtifact] = {}
+        for produced in plan_task.produces:
+            if not produced.startswith("contracts/"):
+                continue
+            path = repo.root / produced
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text('{"type":"object"}\n', encoding="utf-8")
+            contract = ContractRepository(repo.root).record(
+                produced,
+                kind="json_schema",
+                producer_task_id=plan_task.id,
+            )
+            materialized[produced] = contract
+        return materialized
 
     def _tasks_in_dependency_order(self, tasks: list[PlanTask]) -> list[PlanTask]:
         remaining = {task.id: task for task in tasks}
@@ -487,6 +517,7 @@ class RunService:
         run_id: str,
         plan: ArtifactEnvelope[Any],
         plan_task: PlanTask,
+        contracts: list[ContractArtifact],
     ) -> ArtifactEnvelope[TaskData]:
         data = TaskData(
             task_id=plan_task.id,
@@ -501,6 +532,7 @@ class RunService:
             allowed_paths=plan_task.allowed_paths,
             forbidden_paths=plan_task.forbidden_paths,
             expected_outputs=plan_task.produces,
+            contracts=contracts,
             acceptance_criteria=plan_task.acceptance_criteria,
             quality_gates=plan_task.quality_gates,
         )

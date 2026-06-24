@@ -18,6 +18,6 @@ Coductor 的阶段术语固定如下：
 
 Phase 1 支持 solo 单任务链路，以及由 `auto` 检测明确先后依赖后生成的顺序 pipeline。Pipeline 会按任务依赖拓扑顺序执行，例如先 dispatch `T001`，再 dispatch 依赖它的 `T002`；失败 Gate 会进入有限修复循环；同一失败指纹重复或达到最大修复次数后进入 `human_required`。
 
-`resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数。恢复前会扫描 run 目录中的 Artifact 链路；若上游 hash 或 revision 与下游 `inputs` 不一致，流程进入 `human_required`，并在 checkpoint 中记录 `stale_artifacts`。链路有效时再继续可重放流程。
+`resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数。恢复前会扫描 run 目录中的 Artifact 链路；若上游 hash、revision 或下游记录的 contract hash 不一致，流程进入 `human_required`，并在 checkpoint 中记录 `stale_artifacts`。链路有效时再继续可重放流程。
 
 `workflow/graph.py` 已能构建最小 LangGraph `StateGraph`；后续会把各阶段副作用继续迁入薄节点，并接入 LangGraph 原生 SQLite saver。

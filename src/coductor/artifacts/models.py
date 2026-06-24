@@ -6,6 +6,7 @@ from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from coductor.contracts.models import ContractArtifact
 from coductor.domain.enums import (
     ArtifactStatus,
     ArtifactType,
@@ -161,6 +162,7 @@ class TaskData(StrictModel):
     allowed_paths: list[str] = Field(default_factory=list)
     forbidden_paths: list[str] = Field(default_factory=list)
     expected_outputs: list[str] = Field(default_factory=list)
+    contracts: list[ContractArtifact] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     quality_gates: list[str] = Field(default_factory=list)
 

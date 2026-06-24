@@ -26,5 +26,7 @@ data: {}
 - 每次写入复制到 `history/`，同一路径通过 `write_next_revision()` 写入时 revision 单调递增；
 - 读取时重新计算 hash，不匹配则拒绝；
 - `inputs` 记录上游路径、revision 和 sha256；
+- `TaskData.contracts` 记录被消费契约的 path、kind、sha256 和 producer task；
 - 下游 Artifact 在执行前必须校验所有 `inputs`，上游 revision 或 hash 改变时视为 stale；
+- 下游 task 记录的 contract 文件 hash 改变时也视为 stale；
 - `resume` 检测到 stale Artifact 时进入 `human_required`，不会静默覆盖旧链路。
