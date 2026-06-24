@@ -1,0 +1,8 @@
+[project]
+name = "coductor-demo-python-project"
+version = "0.1.0"
+requires-python = ">=3.12"
+description = "Small project used by Coductor fake backend E2E tests."
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

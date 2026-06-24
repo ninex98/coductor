@@ -15,20 +15,22 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 
 ## 当前范围
 
-本仓库实现 Phase 0 + Phase 1 的首个可运行垂直切片：
+本仓库实现本地可运行的核心垂直切片：
 
 - Python `src` 布局、CLI、配置、文档和测试骨架；
 - Pydantic v2 YAML Artifact Envelope；
 - Artifact hash、revision history、lineage 输入记录和 stale 拦截；
 - `coductor init`、`run`、`status`、`show`、`resume`、`report`、`doctor`；
+- `coductor artifacts`、`logs`、`explain`、`approve`、`pause`、`stop`、`verify`、`review` 控制面命令；
 - 仓库扫描、模拟 Spec、solo Plan、Plan Validator；
 - `FakeCodingBackend` 离线端到端运行；
 - Backend Factory：测试使用 fake，SDK 不可用时按配置降级到 `codex exec`；
 - `codex exec` fallback 使用显式 sandbox、JSONL 输出和 JSON Schema 响应约束；
 - `auto` 会在检测到明确先后依赖时生成顺序 pipeline，并按任务依赖顺序执行；
 - Contract Artifact 记录契约文件 hash，下游 task 消费契约时会被 stale 校验保护；
+- 显式 `parallel` 计划会先检查写路径冲突和 contract handoff，安全时执行独立任务并写 integration report；
 - 质量门执行、失败指纹、有限修复循环；
-- 独立 Reviewer Worker 和 Evidence Bundle；
+- 独立 Reviewer Worker 和 Evidence Bundle；Evidence 只有在必需 Gate 通过、无 blocking review、且存在 patch evidence 时才 ready；
 - SQLite run/event 索引。
 
 LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后：`fake` 用于离线验证，`codex_sdk` 保持 SDK 边界，SDK 缺失且配置允许时自动 fallback 到 `codex_exec`。
@@ -38,19 +40,23 @@ LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、r
 ## 最短演示
 
 ```bash
-uv sync
-uv run coductor init
-uv run coductor doctor
-uv run coductor run "修复示例函数并补充测试" --backend fake
-uv run coductor status
-uv run coductor show <RUN_ID>
-uv run coductor report <RUN_ID>
+.venv/bin/coductor init
+.venv/bin/coductor doctor
+.venv/bin/coductor run "修复示例函数并补充测试" --backend fake
+.venv/bin/coductor status <RUN_ID>
+.venv/bin/coductor artifacts <RUN_ID>
+.venv/bin/coductor logs <RUN_ID>
+.venv/bin/coductor explain <RUN_ID>
+.venv/bin/coductor report <RUN_ID>
 ```
 
-在当前受限环境没有 `uv` 时，可以用 Python 3.12 做基础调用：
+这些命令已用 `examples/demo-python-project` 和当前 `.venv/bin/coductor` 验证。一次 fake backend demo 的稳定输出要点：
 
-```bash
-PYTHONPATH=src python3 -m coductor.cli doctor
+```text
+状态: ready_for_human_review
+Final status: ready_for_human_review
+Required gates: 1/1 passed
+Evidence validation: valid
 ```
 
 ## 生成目录
@@ -106,8 +112,7 @@ data:
 
 ## Roadmap
 
-- Phase 2：动态 pipeline、Task DAG、上游 Artifact 哈希失效、契约文件；
-- Phase 3：Git Worktree、安全并行 Worker、写路径冲突预检查、集成；
-- Phase 4：Web 控制台、通知审批、PR 创建、成本/Token 指标、更多 Backend。
+- 已完成：artifact lineage、resume stale 检测、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、CLI 控制面、evidence hardening、demo E2E。
+- 后续：Web 控制台、通知审批、PR 创建、成本/Token 指标、更多 Backend、LangGraph 原生持久化接入。
 
 危险能力默认关闭：不推送远程分支，不创建 PR，不读取生产秘密，不自动合并。

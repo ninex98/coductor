@@ -30,6 +30,7 @@ data: {}
 - 下游 Artifact 在执行前必须校验所有 `inputs`，上游 revision 或 hash 改变时视为 stale；
 - 下游 task 记录的 contract 文件 hash 改变时也视为 stale；
 - `resume` 检测到 stale Artifact 时进入 `human_required`，不会静默覆盖旧链路。
+- `schemas/*.schema.json` 由 Pydantic Artifact 模型生成，发布前必须与模型同步；
 - `EvidenceBundleData.validation` 记录交付完整性检查结果；
 - evidence 只有在必需质量门无失败、独立 review 无 blocking findings、且至少包含一个 patch evidence 时才允许 `ready_for_human_review`；
 - blocking review 或缺失 patch 时仍会写入 `07_evidence.yaml` 与 `delivery-report.md`，但 `final_status` 必须为 `human_required`。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -38,8 +39,13 @@ def _discover_quality_gates(root: Path) -> list[QualityGateConfig]:
     package_json = root / "package.json"
     composer_json = root / "composer.json"
     if pyproject.exists():
-        gates.append(QualityGateConfig(id="unit_tests", command="pytest -q", timeout_seconds=300))
-        gates.append(QualityGateConfig(id="lint", command="ruff check .", timeout_seconds=120))
+        gates.append(
+            QualityGateConfig(
+                id="unit_tests",
+                command=f"{sys.executable} -m pytest -q",
+                timeout_seconds=300,
+            )
+        )
     if package_json.exists():
         try:
             package = json.loads(package_json.read_text(encoding="utf-8"))

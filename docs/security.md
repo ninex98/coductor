@@ -9,5 +9,6 @@ Coductor 默认最小权限：
 - `.env*`、`**/secrets/**`、`**/production/**` 默认保护；
 - 不自动提升权限；
 - 不伪造测试、构建或审查成功。
+- Evidence 必须包含通过的必需 Gate、无 blocking review 和 patch evidence 才能进入 `ready_for_human_review`。
 
-质量门命令必须来自配置或明确的人类输入。MVP 使用 `subprocess.run(shlex.split(command))`，避免 `shell=True` 拼接。
+质量门命令必须来自配置或明确的人类输入。当前实现使用 `subprocess.run(shlex.split(command))`，避免 `shell=True` 拼接。
