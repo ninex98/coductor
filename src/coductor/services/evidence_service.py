@@ -34,12 +34,14 @@ class EvidenceService:
         passed = [gate for gate in required if gate.status == "passed"]
         failed = [gate for gate in required if gate.status != "passed"]
         evidence_files: list[EvidenceFile] = []
-        patch_path = run_dir / "tasks/T001/patch.diff"
-        if patch_path.exists():
+        for task_id in completed_tasks:
+            patch_path = run_dir / f"tasks/{task_id}/patch.diff"
+            if not patch_path.exists():
+                continue
             evidence_files.append(
                 EvidenceFile(
                     type="patch",
-                    path="tasks/T001/patch.diff",
+                    path=f"tasks/{task_id}/patch.diff",
                     sha256=file_sha256(patch_path),
                 )
             )

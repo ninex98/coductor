@@ -16,6 +16,7 @@ from coductor.artifacts.models import (
     GateReportData,
     GoalData,
     IntegrationData,
+    PlanTask,
     Producer,
     RepairRequestData,
     RepositorySnapshotData,
@@ -44,7 +45,11 @@ from coductor.domain.ids import new_id
 from coductor.domain.models import RunResult
 from coductor.gates.models import QualityGate
 from coductor.gates.runner import GateRunner
-from coductor.planning.planner import create_solo_plan
+from coductor.planning.planner import (
+    choose_strategy,
+    create_pipeline_plan,
+    create_solo_plan,
+)
 from coductor.prompts.renderer import render_worker_prompt
 from coductor.repository.inspector import RepositoryInspector
 from coductor.services.evidence_service import EvidenceService
@@ -110,16 +115,26 @@ class RunService:
         state.artifacts["02_spec"] = "02_spec.yaml"
         state.current_stage = "create_execution_plan"
         self.save_checkpoint(state)
-        plan = self._write_plan(repo, run_id, spec, snapshot)
+        plan = self._write_plan(repo, run_id, spec, snapshot, requested_mode)
         state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
         state.current_stage = "materialize_tasks"
         self.save_checkpoint(state)
-        task = self._write_task(repo, run_id, plan)
-        state.artifacts["task_T001"] = "tasks/T001/task.yaml"
-        state.current_stage = "dispatch_tasks"
-        self.save_checkpoint(state)
-        worker_handle = self._dispatch_builder(repo, run_id, task)
-        state.artifacts["worker_result_T001"] = "tasks/T001/worker_result.yaml"
+        executed_tasks = self._execute_plan_tasks(repo, run_id, plan, state)
+        if not executed_tasks:
+            state.status = RunStatus.HUMAN_REQUIRED
+            state.current_stage = "human_required"
+            self._store_run(state, run_dir)
+            self.save_checkpoint(state)
+            return RunResult(
+                run_id=run_id,
+                status=state.status,
+                run_dir=run_dir.as_posix(),
+                repair_attempts=state.repair_attempts,
+                message="执行计划没有可运行任务",
+            )
+        worker_handle = executed_tasks[-1][1]
+        repair_target_task_id = executed_tasks[-1][0]
+        completed_task_ids = [task_id for task_id, _handle in executed_tasks]
         state.current_stage = "integrate_changes"
         self.save_checkpoint(state)
         self._write_integration(repo, run_id, plan)
@@ -164,11 +179,18 @@ class RunService:
             state.repair_attempts += 1
             state.current_stage = "repair_failure"
             self.save_checkpoint(state)
-            self._repair(repo, run_id, worker_handle, gate_report, state.repair_attempts)
+            self._repair(
+                repo,
+                run_id,
+                worker_handle,
+                gate_report,
+                state.repair_attempts,
+                repair_target_task_id,
+            )
             state.current_stage = "run_quality_gates"
             self.save_checkpoint(state)
 
-        review = self._review(repo, run_id, gate_report)
+        review = self._review(repo, run_id, gate_report, completed_task_ids)
         state.artifacts["06_review"] = "06_review.yaml"
         state.current_stage = "run_independent_review"
         self.save_checkpoint(state)
@@ -184,7 +206,15 @@ class RunService:
                 repair_attempts=state.repair_attempts,
                 message="独立审查存在阻塞问题",
             )
-        evidence = self._evidence(repo, run_id, goal, gate_report, review)
+        evidence = self._evidence(
+            repo,
+            run_id,
+            goal,
+            gate_report,
+            review,
+            plan.data.strategy,
+            completed_task_ids,
+        )
         state.artifacts["07_evidence"] = "07_evidence.yaml"
         state.status = (
             RunStatus.READY_FOR_HUMAN_REVIEW
@@ -384,8 +414,14 @@ class RunService:
         run_id: str,
         spec: ArtifactEnvelope[SpecificationData],
         snapshot: ArtifactEnvelope[RepositorySnapshotData],
+        requested_mode: ExecutionMode,
     ) -> ArtifactEnvelope[Any]:
-        data = create_solo_plan(spec.data, snapshot.data.base_commit)
+        decision = choose_strategy(spec.data.objective, requested_mode=requested_mode)
+        data = (
+            create_pipeline_plan(spec.data, snapshot.data.base_commit, decision.reasoning)
+            if decision.strategy == ExecutionStrategy.PIPELINE
+            else create_solo_plan(spec.data, snapshot.data.base_commit)
+        )
         envelope = self._envelope(
             run_id=run_id,
             artifact_type=ArtifactType.EXECUTION_PLAN,
@@ -403,25 +439,70 @@ class RunService:
         repo.write("03_execution_plan.yaml", envelope)
         return envelope
 
+    def _execute_plan_tasks(
+        self,
+        repo: ArtifactRepository,
+        run_id: str,
+        plan: ArtifactEnvelope[Any],
+        state: WorkflowState,
+    ) -> list[tuple[str, WorkerHandle]]:
+        executed: list[tuple[str, WorkerHandle]] = []
+        for plan_task in self._tasks_in_dependency_order(plan.data.tasks):
+            task = self._write_task(repo, run_id, plan, plan_task)
+            task_path = f"tasks/{plan_task.id}/task.yaml"
+            state.artifacts[f"task_{plan_task.id}"] = task_path
+            state.current_stage = "dispatch_tasks"
+            self.save_checkpoint(state)
+            self._event(run_id, "dispatch_tasks", f"dispatch {plan_task.id}")
+            worker_handle = self._dispatch_builder(repo, run_id, task)
+            state.artifacts[f"worker_result_{plan_task.id}"] = (
+                f"tasks/{plan_task.id}/worker_result.yaml"
+            )
+            self.save_checkpoint(state)
+            executed.append((plan_task.id, worker_handle))
+        return executed
+
+    def _tasks_in_dependency_order(self, tasks: list[PlanTask]) -> list[PlanTask]:
+        remaining = {task.id: task for task in tasks}
+        completed: set[str] = set()
+        ordered: list[PlanTask] = []
+        while remaining:
+            ready = [
+                task
+                for task in remaining.values()
+                if all(dependency in completed for dependency in task.depends_on)
+            ]
+            if not ready:
+                return tasks
+            ready.sort(key=lambda task: task.id)
+            task = ready[0]
+            ordered.append(task)
+            completed.add(task.id)
+            del remaining[task.id]
+        return ordered
+
     def _write_task(
         self,
         repo: ArtifactRepository,
         run_id: str,
         plan: ArtifactEnvelope[Any],
+        plan_task: PlanTask,
     ) -> ArtifactEnvelope[TaskData]:
-        task = plan.data.tasks[0]
         data = TaskData(
-            task_id=task.id,
-            objective=task.title,
-            role=task.role,
-            depends_on=task.depends_on,
+            task_id=plan_task.id,
+            objective=plan_task.title,
+            role=plan_task.role,
+            depends_on=plan_task.depends_on,
             global_context=["00_goal.yaml", "01_repository_snapshot.yaml", "02_spec.yaml"],
-            upstream_artifacts=[],
-            allowed_paths=task.allowed_paths,
-            forbidden_paths=task.forbidden_paths,
-            expected_outputs=task.produces,
-            acceptance_criteria=task.acceptance_criteria,
-            quality_gates=task.quality_gates,
+            upstream_artifacts=[
+                f"tasks/{dependency}/worker_result.yaml"
+                for dependency in plan_task.depends_on
+            ],
+            allowed_paths=plan_task.allowed_paths,
+            forbidden_paths=plan_task.forbidden_paths,
+            expected_outputs=plan_task.produces,
+            acceptance_criteria=plan_task.acceptance_criteria,
+            quality_gates=plan_task.quality_gates,
         )
         envelope = self._envelope(
             run_id=run_id,
@@ -432,7 +513,7 @@ class RunService:
             inputs=[ArtifactInput.model_validate(repo.input_for("03_execution_plan.yaml", plan))],
             data=data,
         )
-        repo.write("tasks/T001/task.yaml", envelope)
+        repo.write(f"tasks/{plan_task.id}/task.yaml", envelope)
         return envelope
 
     def _dispatch_builder(
@@ -441,14 +522,18 @@ class RunService:
         run_id: str,
         task: ArtifactEnvelope[TaskData],
     ) -> WorkerHandle:
+        task_id = task.data.task_id
+        task_path = f"tasks/{task_id}/task.yaml"
         request_data = WorkerRequestData(
-            worker_id="worker_T001",
+            worker_id=f"worker_{task_id}",
             backend=self.config.backend.provider,
             role="builder",
             sandbox=SandboxMode.WORKSPACE_WRITE,
             workspace_path=".",
             prompt_template="builder",
-            context_artifacts=task.data.global_context + ["tasks/T001/task.yaml"],
+            context_artifacts=task.data.global_context
+            + task.data.upstream_artifacts
+            + [task_path],
             output_schema="worker_result",
         )
         request_envelope = self._envelope(
@@ -458,9 +543,9 @@ class RunService:
             status=ArtifactStatus.READY,
             producer=Producer(kind=ProducerKind.SYSTEM, name="worker-dispatcher"),
             data=request_data,
-            inputs=[ArtifactInput.model_validate(repo.input_for("tasks/T001/task.yaml", task))],
+            inputs=[ArtifactInput.model_validate(repo.input_for(task_path, task))],
         )
-        repo.write("tasks/T001/worker_request.yaml", request_envelope)
+        repo.write(f"tasks/{task_id}/worker_request.yaml", request_envelope)
         prompt = render_worker_prompt(
             "builder",
             request_data.context_artifacts,
@@ -475,11 +560,11 @@ class RunService:
         )
         handle = self.backend.start_worker(request)
         result = self.backend.continue_worker(handle, request)
-        patch = self._ensure_patch(repo.root)
+        patch = self._ensure_patch(repo.root, task_id)
         result_data = WorkerResultData(
             worker_id=result.worker_id,
             thread_id=result.thread_id,
-            task_id="T001",
+            task_id=task_id,
             summary=result.summary,
             files_read=result.files_read,
             files_changed=result.files_changed,
@@ -487,7 +572,7 @@ class RunService:
             tests_claimed=result.tests_claimed,
             generated_artifacts=result.generated_artifacts,
             patch=FileReference(
-                path="tasks/T001/patch.diff",
+                path=f"tasks/{task_id}/patch.diff",
                 sha256=file_sha256(patch),
                 bytes=patch.stat().st_size,
             ),
@@ -503,15 +588,15 @@ class RunService:
             data=result_data,
             inputs=[
                 ArtifactInput.model_validate(
-                    repo.input_for("tasks/T001/worker_request.yaml", request_envelope)
+                    repo.input_for(f"tasks/{task_id}/worker_request.yaml", request_envelope)
                 )
             ],
         )
-        repo.write("tasks/T001/worker_result.yaml", result_envelope)
+        repo.write(f"tasks/{task_id}/worker_result.yaml", result_envelope)
         return handle
 
-    def _ensure_patch(self, run_dir: Path) -> Path:
-        patch = run_dir / "tasks/T001/patch.diff"
+    def _ensure_patch(self, run_dir: Path, task_id: str) -> Path:
+        patch = run_dir / f"tasks/{task_id}/patch.diff"
         patch.parent.mkdir(parents=True, exist_ok=True)
         if not patch.exists():
             patch.write_text("# fake backend did not produce a patch\n", encoding="utf-8")
@@ -568,6 +653,7 @@ class RunService:
         builder_handle: WorkerHandle,
         gate_report: ArtifactEnvelope[GateReportData],
         attempt: int,
+        target_task_id: str,
     ) -> None:
         failed = [gate.id for gate in gate_report.data.gates if gate.status != "passed"]
         fingerprints = [
@@ -577,7 +663,7 @@ class RunService:
         repair_dir = f"repairs/{repair_id}"
         request_data = RepairRequestData(
             repair_id=repair_id,
-            target_task_id="T001",
+            target_task_id=target_task_id,
             resume_thread_id=builder_handle.thread_id,
             attempt=attempt,
             max_attempts=self.config.workflow.max_repair_attempts,
@@ -601,7 +687,7 @@ class RunService:
         )
         repo.write(f"{repair_dir}/repair_request.yaml", request_envelope)
         request = WorkerRequest(
-            worker_id="worker_T001_repair",
+            worker_id=f"worker_{target_task_id}_repair",
             role="repairer",
             prompt=render_worker_prompt(
                 "repairer",
@@ -619,7 +705,7 @@ class RunService:
         result_data = WorkerResultData(
             worker_id=result.worker_id,
             thread_id=result.thread_id,
-            task_id="T001",
+            task_id=target_task_id,
             summary=result.summary,
             patch=FileReference(
                 path=f"{repair_dir}/repair_result.patch",
@@ -648,13 +734,19 @@ class RunService:
         repo: ArtifactRepository,
         run_id: str,
         gate_report: ArtifactEnvelope[GateReportData],
+        completed_task_ids: list[str],
     ) -> ArtifactEnvelope[ReviewReportData]:
+        patch_paths = [
+            f"tasks/{task_id}/patch.diff"
+            for task_id in completed_task_ids
+            if (repo.root / f"tasks/{task_id}/patch.diff").exists()
+        ]
         request = WorkerRequest(
             worker_id="worker_review",
             role="reviewer",
             prompt=render_worker_prompt(
                 "reviewer",
-                ["02_spec.yaml", "05_gate_report.yaml", "tasks/T001/patch.diff"],
+                ["02_spec.yaml", "05_gate_report.yaml", *patch_paths],
                 "independently review the verified change",
             ),
             workspace_path=self.root.as_posix(),
@@ -694,15 +786,17 @@ class RunService:
         goal: ArtifactEnvelope[GoalData],
         gate_report: ArtifactEnvelope[GateReportData],
         review: ArtifactEnvelope[ReviewReportData],
+        strategy: ExecutionStrategy,
+        completed_task_ids: list[str],
     ) -> ArtifactEnvelope[EvidenceBundleData]:
         service = EvidenceService()
         data = service.build(
             run_dir=repo.root,
             goal_title=goal.data.title,
-            strategy=ExecutionStrategy.SOLO,
+            strategy=strategy,
             gate_report=gate_report.data,
             review=review.data,
-            completed_tasks=["T001"],
+            completed_tasks=completed_task_ids,
         )
         envelope = self._envelope(
             run_id=run_id,

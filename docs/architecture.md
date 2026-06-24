@@ -35,7 +35,7 @@ Phase 1 由 `RunService` 执行这个垂直切片，并通过 SQLite workflow ch
 
 ## Solo First
 
-`auto` 模式默认生成 `solo` 计划。`pipeline` 和 `parallel` 的数据模型和验证器已经存在，但执行器暂不伪造成功。并行计划必须通过依赖图、验收覆盖、上游 Artifact、写路径冲突和策略理由检查。
+`auto` 模式默认生成 `solo` 计划。当目标出现明确的先后依赖信号，例如 `先`、`再`、`schema`、`contract`、`OpenAPI`、`上游`、`下游`，Planner 会选择 `pipeline`。Pipeline 当前按任务依赖拓扑顺序串行执行，每个任务都会生成自己的 `tasks/<task-id>/task.yaml`、worker request/result 和 patch。`parallel` 的数据模型和验证器已经存在，但执行器暂不伪造成功；并行计划必须通过依赖图、验收覆盖、上游 Artifact、写路径冲突和策略理由检查。
 
 ## Backend Boundary
 

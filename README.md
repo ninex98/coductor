@@ -25,6 +25,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 - `FakeCodingBackend` 离线端到端运行；
 - Backend Factory：测试使用 fake，SDK 不可用时按配置降级到 `codex exec`；
 - `codex exec` fallback 使用显式 sandbox、JSONL 输出和 JSON Schema 响应约束；
+- `auto` 会在检测到明确先后依赖时生成顺序 pipeline，并按任务依赖顺序执行；
 - 质量门执行、失败指纹、有限修复循环；
 - 独立 Reviewer Worker 和 Evidence Bundle；
 - SQLite run/event 索引。
@@ -67,7 +68,7 @@ PYTHONPATH=src python3 -m coductor.cli doctor
 ├── history/
 ├── logs/
 ├── repairs/
-└── tasks/T001/
+└── tasks/<task-id>/
     ├── task.yaml
     ├── worker_request.yaml
     ├── worker_result.yaml
@@ -81,13 +82,19 @@ schema_version: "1.0"
 artifact_type: execution_plan
 status: validated
 data:
-  strategy: solo
+  strategy: pipeline
   strategy_reasoning:
-    - "auto 模式默认倾向 solo；当前目标可由一个连续上下文完成"
+    - "目标包含明确的先后依赖信号"
   tasks:
     - id: T001
+      task_type: contract_authoring
+      role: builder
+      depends_on: []
+    - id: T002
       task_type: integrated_implementation
       role: builder
+      depends_on:
+        - T001
       allowed_paths:
         - "src/**"
         - "tests/**"
