@@ -175,6 +175,9 @@
         },
         "strategy_used": {
           "$ref": "#/$defs/ExecutionStrategy"
+        },
+        "validation": {
+          "$ref": "#/$defs/EvidenceValidation"
         }
       },
       "required": [
@@ -212,6 +215,25 @@
         "sha256"
       ],
       "title": "EvidenceFile",
+      "type": "object"
+    },
+    "EvidenceValidation": {
+      "additionalProperties": false,
+      "properties": {
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "valid": {
+          "default": true,
+          "title": "Valid",
+          "type": "boolean"
+        }
+      },
+      "title": "EvidenceValidation",
       "type": "object"
     },
     "ExecutionStrategy": {

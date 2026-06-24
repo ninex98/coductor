@@ -9,6 +9,7 @@ from coductor.artifacts.models import (
     AcceptanceCoverage,
     EvidenceBundleData,
     EvidenceFile,
+    EvidenceValidation,
     GateReportData,
     GateSummary,
     PullRequestInfo,
@@ -17,6 +18,18 @@ from coductor.artifacts.models import (
     Rollback,
 )
 from coductor.domain.enums import ExecutionStrategy
+
+
+class EvidenceCompletenessValidator:
+    def validate(self, evidence: EvidenceBundleData) -> EvidenceValidation:
+        errors: list[str] = []
+        if evidence.gate_summary.failed > 0:
+            errors.append("required gates failed")
+        if evidence.review_summary.blocking_findings > 0:
+            errors.append("blocking review findings exist")
+        if not any(item.type == "patch" for item in evidence.evidence_files):
+            errors.append("missing patch evidence")
+        return EvidenceValidation(valid=not errors, errors=errors)
 
 
 class EvidenceService:
@@ -45,14 +58,9 @@ class EvidenceService:
                     sha256=file_sha256(patch_path),
                 )
             )
-        final_status = (
-            "ready_for_human_review"
-            if not failed and review.blocking_findings == 0
-            else "human_required"
-        )
-        return EvidenceBundleData(
+        evidence = EvidenceBundleData(
             goal_title=goal_title,
-            final_status=final_status,
+            final_status="ready_for_human_review",
             strategy_used=strategy,
             base_commit=gate_report.base_commit,
             head_commit=gate_report.head_commit,
@@ -84,6 +92,11 @@ class EvidenceService:
                 body_path="delivery-report.md",
             ),
         )
+        validation = EvidenceCompletenessValidator().validate(evidence)
+        evidence.validation = validation
+        if not validation.valid:
+            evidence.final_status = "human_required"
+        return evidence
 
     def write_report(self, run_dir: Path, evidence: EvidenceBundleData) -> Path:
         report = run_dir / "delivery-report.md"
@@ -96,6 +109,8 @@ class EvidenceService:
             "- Required gates: "
             f"{evidence.gate_summary.passed}/{evidence.gate_summary.required} passed",
             f"- Blocking review findings: {evidence.review_summary.blocking_findings}",
+            "- Evidence validation: "
+            f"{'valid' if evidence.validation.valid else 'invalid'}",
             "",
             "## Evidence Files",
         ]
@@ -106,5 +121,8 @@ class EvidenceService:
             )
         else:
             lines.append("- No patch file was produced in the fake/demo run.")
+        if evidence.validation.errors:
+            lines.extend(["", "## Evidence Validation"])
+            lines.extend(f"- {error}" for error in evidence.validation.errors)
         report.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return report

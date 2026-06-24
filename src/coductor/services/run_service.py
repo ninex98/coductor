@@ -211,18 +211,6 @@ class RunService:
         state.artifacts["06_review"] = "06_review.yaml"
         state.current_stage = "run_independent_review"
         self.save_checkpoint(state)
-        if review.data.requires_repair or review.data.blocking_findings > 0:
-            state.status = RunStatus.HUMAN_REQUIRED
-            state.current_stage = "human_required"
-            self._store_run(state, run_dir)
-            self.save_checkpoint(state)
-            return RunResult(
-                run_id=run_id,
-                status=state.status,
-                run_dir=run_dir.as_posix(),
-                repair_attempts=state.repair_attempts,
-                message="独立审查存在阻塞问题",
-            )
         evidence = self._evidence(
             repo,
             run_id,
@@ -241,12 +229,17 @@ class RunService:
         state.current_stage = "prepare_evidence"
         self._store_run(state, run_dir)
         self.save_checkpoint(state)
+        message = (
+            "run completed"
+            if state.status == RunStatus.READY_FOR_HUMAN_REVIEW
+            else "evidence requires human attention"
+        )
         return RunResult(
             run_id=run_id,
             status=state.status,
             run_dir=run_dir.as_posix(),
             repair_attempts=state.repair_attempts,
-            message="run completed",
+            message=message,
         )
 
     def save_checkpoint(self, state: WorkflowState) -> None:
@@ -861,7 +854,11 @@ class RunService:
             run_id=run_id,
             artifact_type=ArtifactType.EVIDENCE_BUNDLE,
             artifact_id_prefix="art_evidence",
-            status=ArtifactStatus.READY_FOR_HUMAN_REVIEW,
+            status=(
+                ArtifactStatus.READY_FOR_HUMAN_REVIEW
+                if data.final_status == "ready_for_human_review"
+                else ArtifactStatus.HUMAN_REQUIRED
+            ),
             producer=Producer(kind=ProducerKind.SYSTEM, name="delivery-manager"),
             data=data,
             inputs=[

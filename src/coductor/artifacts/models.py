@@ -312,6 +312,11 @@ class EvidenceFile(StrictModel):
     sha256: str
 
 
+class EvidenceValidation(StrictModel):
+    valid: bool = True
+    errors: list[str] = Field(default_factory=list)
+
+
 class EvidenceBundleData(StrictModel):
     goal_title: str
     final_status: str
@@ -323,6 +328,7 @@ class EvidenceBundleData(StrictModel):
     gate_summary: GateSummary
     review_summary: ReviewSummary
     evidence_files: list[EvidenceFile] = Field(default_factory=list)
+    validation: EvidenceValidation = Field(default_factory=EvidenceValidation)
     known_risks: list[str] = Field(default_factory=list)
     manual_checks: list[str] = Field(default_factory=list)
     rollback: Rollback
