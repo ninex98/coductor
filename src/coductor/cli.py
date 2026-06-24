@@ -31,8 +31,39 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 console = Console() if Console is not None else None
+CLI_HELP = """
+Coductor / 确定性 AI Coding 工作流引擎
+
+From goal to verified change. 把自然语言研发目标转成可审计、可恢复、可验证的工程流程。
+
+Quick start / 快速开始:
+  coductor init
+  coductor doctor
+  coductor run "修复示例函数并补充测试" --backend fake
+  coductor status <RUN_ID>
+  coductor artifacts <RUN_ID>
+  coductor logs <RUN_ID>
+  coductor explain <RUN_ID>
+  coductor report <RUN_ID>
+
+Common commands / 常用命令:
+  init       初始化当前项目 / Initialize a project
+  run        运行研发目标 / Run a coding goal
+  status     查看运行状态 / Show run status
+  artifacts  查看产物列表 / List run artifacts
+  logs       查看事件日志 / Show run event logs
+  explain    解释状态和下一步 / Explain state and next command
+  report     查看交付报告 / Show delivery report
+  doctor     检查安装与安全默认值 / Check installation and defaults
+"""
+
 if typer is not None:
-    app: Any = typer.Typer(help="Coductor: Deterministic AI Coding Workflow Engine")
+    app: Any = typer.Typer(
+        help=CLI_HELP,
+        no_args_is_help=False,
+        invoke_without_command=True,
+        context_settings={"help_option_names": ["--help", "-h"]},
+    )
 else:  # pragma: no cover
     app = None
 
@@ -42,6 +73,10 @@ def _print(message: str) -> None:
         console.print(message)
     else:
         print(message)
+
+
+def print_quick_start() -> None:
+    _print(CLI_HELP.strip())
 
 
 def _root(path: str | Path = ".") -> Path:
@@ -237,79 +272,105 @@ def doctor() -> None:
 
 if typer is not None:
 
-    @app.command("init")  # type: ignore[untyped-decorator]
+    def version_callback(value: bool) -> None:
+        if value:
+            _print(f"coductor {VERSION}")
+            raise typer.Exit
+
+    @app.callback()  # type: ignore[untyped-decorator]
+    def main_callback(
+        ctx: typer.Context,
+        version: Annotated[
+            bool,
+            typer.Option(
+                "--version",
+                callback=version_callback,
+                is_eager=True,
+                help="显示版本并退出 / Show version and exit.",
+            ),
+        ] = False,
+    ) -> None:
+        del version
+        if ctx.invoked_subcommand is None:
+            print_quick_start()
+            raise typer.Exit
+
+    @app.command("init", help="初始化当前项目 / Initialize a project.")  # type: ignore[untyped-decorator]
     def init_command(
-        path: Annotated[str, typer.Argument(help="被管理仓库路径")] = ".",
+        path: Annotated[str, typer.Argument(help="被管理仓库路径 / Managed repo path")] = ".",
     ) -> None:
         init_project(path)
 
-    @app.command("run")  # type: ignore[untyped-decorator]
+    @app.command("run", help="运行研发目标 / Run a coding goal.")  # type: ignore[untyped-decorator]
     def run_command(
-        goal: Annotated[str, typer.Argument(help="自然语言研发目标")],
+        goal: Annotated[str, typer.Argument(help="自然语言研发目标 / Natural-language goal")],
         mode: Annotated[
             str,
-            typer.Option("--mode", help="auto|solo|pipeline|parallel"),
+            typer.Option("--mode", help="执行模式 / Execution mode: auto|solo|pipeline|parallel"),
         ] = "auto",
-        dry_run: Annotated[bool, typer.Option("--dry-run", help="只生成前置计划")] = False,
+        dry_run: Annotated[
+            bool,
+            typer.Option("--dry-run", help="只生成前置计划 / Plan only, do not start workers"),
+        ] = False,
         backend: Annotated[
             str | None,
-            typer.Option("--backend", help="fake|codex_sdk|codex_exec"),
+            typer.Option("--backend", help="后端 / Backend: fake|codex_sdk|codex_exec"),
         ] = None,
     ) -> None:
         run_goal(goal, mode, dry_run, backend)
 
-    @app.command("status")  # type: ignore[untyped-decorator]
+    @app.command("status", help="查看运行状态 / Show run status.")  # type: ignore[untyped-decorator]
     def status_command(
-        run_id: Annotated[str | None, typer.Argument(help="Run ID")] = None,
-        watch: Annotated[bool, typer.Option("--watch", help="持续刷新")] = False,
+        run_id: Annotated[str | None, typer.Argument(help="Run ID，可省略为最新运行")] = None,
+        watch: Annotated[bool, typer.Option("--watch", help="持续刷新 / Watch updates")] = False,
     ) -> None:
         status_run(run_id, watch)
 
-    @app.command("show")  # type: ignore[untyped-decorator]
+    @app.command("show", help="显示运行摘要 / Show run summary.")  # type: ignore[untyped-decorator]
     def show_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         show_run(run_id)
 
-    @app.command("resume")  # type: ignore[untyped-decorator]
+    @app.command("resume", help="恢复运行 / Resume a run.")  # type: ignore[untyped-decorator]
     def resume_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         resume_run(run_id)
 
-    @app.command("report")  # type: ignore[untyped-decorator]
+    @app.command("report", help="查看交付报告 / Show delivery report.")  # type: ignore[untyped-decorator]
     def report_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         report_run(run_id)
 
-    @app.command("artifacts")  # type: ignore[untyped-decorator]
+    @app.command("artifacts", help="查看产物列表 / List run artifacts.")  # type: ignore[untyped-decorator]
     def artifacts_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         artifacts_run(run_id)
 
-    @app.command("logs")  # type: ignore[untyped-decorator]
+    @app.command("logs", help="查看事件日志 / Show run event logs.")  # type: ignore[untyped-decorator]
     def logs_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         logs_run(run_id)
 
-    @app.command("explain")  # type: ignore[untyped-decorator]
+    @app.command("explain", help="解释状态和下一步 / Explain state and next command.")  # type: ignore[untyped-decorator]
     def explain_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         explain_run(run_id)
 
-    @app.command("approve")  # type: ignore[untyped-decorator]
+    @app.command("approve", help="人工批准运行 / Mark a run approved.")  # type: ignore[untyped-decorator]
     def approve_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         approve_run(run_id)
 
-    @app.command("pause")  # type: ignore[untyped-decorator]
+    @app.command("pause", help="暂停运行 / Mark a run paused.")  # type: ignore[untyped-decorator]
     def pause_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         pause_run(run_id)
 
-    @app.command("stop")  # type: ignore[untyped-decorator]
+    @app.command("stop", help="停止运行 / Mark a run stopped.")  # type: ignore[untyped-decorator]
     def stop_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         stop_run(run_id)
 
-    @app.command("verify")  # type: ignore[untyped-decorator]
+    @app.command("verify", help="请求重新验证 / Request verification.")  # type: ignore[untyped-decorator]
     def verify_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         verify_run(run_id)
 
-    @app.command("review")  # type: ignore[untyped-decorator]
+    @app.command("review", help="请求人工审查 / Request review.")  # type: ignore[untyped-decorator]
     def review_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         review_run(run_id)
 
-    @app.command("doctor")  # type: ignore[untyped-decorator]
+    @app.command("doctor", help="检查安装与安全默认值 / Check installation and defaults.")  # type: ignore[untyped-decorator]
     def doctor_command() -> None:
         doctor()
 

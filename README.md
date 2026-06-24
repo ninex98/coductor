@@ -39,15 +39,26 @@ LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、r
 
 ## 最短演示
 
+推荐先把 Coductor 作为独立 CLI 工具安装，而不是在每个目标项目里复制源码：
+
 ```bash
-.venv/bin/coductor init
-.venv/bin/coductor doctor
-.venv/bin/coductor run "修复示例函数并补充测试" --backend fake
-.venv/bin/coductor status <RUN_ID>
-.venv/bin/coductor artifacts <RUN_ID>
-.venv/bin/coductor logs <RUN_ID>
-.venv/bin/coductor explain <RUN_ID>
-.venv/bin/coductor report <RUN_ID>
+pipx install -e /Users/ninex/Projects/hll-ecosystem/apps/coductor
+coductor --help
+coductor --version
+```
+
+`pipx install -e` 是 editable 安装：日常修改 Coductor 源码后通常不需要重装；如果改了依赖、入口脚本或 `pyproject.toml`，再执行 `pipx reinstall coductor`。运行 `coductor` 时，它只会在当前目标项目写入 `coductor.yaml` 和 `.coductor/`，不会把运行产物写回 Coductor 源码目录。
+
+```bash
+cd /path/to/target-project
+coductor init
+coductor doctor
+coductor run "修复示例函数并补充测试" --backend fake
+coductor status <RUN_ID>
+coductor artifacts <RUN_ID>
+coductor logs <RUN_ID>
+coductor explain <RUN_ID>
+coductor report <RUN_ID>
 ```
 
 这些命令已用 `examples/demo-python-project` 和当前 `.venv/bin/coductor` 验证。一次 fake backend demo 的稳定输出要点：

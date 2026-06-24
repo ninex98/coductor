@@ -9,6 +9,40 @@ from coductor.cli import app
 from coductor.storage.database import Database
 
 
+def test_cli_root_help_is_bilingual_and_actionable() -> None:
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Coductor / 确定性 AI Coding 工作流引擎" in result.output
+    assert "Quick start / 快速开始" in result.output
+    assert "init       初始化当前项目 / Initialize a project" in result.output
+    assert "run        运行研发目标 / Run a coding goal" in result.output
+    assert "artifacts  查看产物列表 / List run artifacts" in result.output
+    assert "--version" in result.output
+
+
+def test_cli_without_command_shows_quick_start() -> None:
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, [])
+
+    assert result.exit_code == 0
+    assert "Quick start / 快速开始" in result.output
+    assert "coductor init" in result.output
+    assert "coductor run \"修复示例函数并补充测试\" --backend fake" in result.output
+
+
+def test_cli_version_option() -> None:
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert "coductor 0.1.0" in result.output
+
+
 def _seed_run(root: Path, run_id: str = "run_abc") -> Path:
     run_dir = root / ".coductor" / "runs" / run_id
     run_dir.mkdir(parents=True)
