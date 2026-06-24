@@ -1,0 +1,314 @@
+{
+  "$defs": {
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "FileReference": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "title": "FileReference",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    },
+    "WorkerResultData": {
+      "additionalProperties": false,
+      "properties": {
+        "commands_run": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Commands Run",
+          "type": "array"
+        },
+        "exit_reason": {
+          "default": "completed",
+          "title": "Exit Reason",
+          "type": "string"
+        },
+        "files_changed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files Changed",
+          "type": "array"
+        },
+        "files_read": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files Read",
+          "type": "array"
+        },
+        "generated_artifacts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Generated Artifacts",
+          "type": "array"
+        },
+        "patch": {
+          "$ref": "#/$defs/FileReference"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "tests_claimed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tests Claimed",
+          "type": "array"
+        },
+        "thread_id": {
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "unresolved_issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Issues",
+          "type": "array"
+        },
+        "usage": {
+          "$ref": "#/$defs/WorkerUsage"
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "worker_id",
+        "thread_id",
+        "task_id",
+        "summary",
+        "patch"
+      ],
+      "title": "WorkerResultData",
+      "type": "object"
+    },
+    "WorkerUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        }
+      },
+      "title": "WorkerUsage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/WorkerResultData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "WorkerResultArtifact",
+  "type": "object"
+}

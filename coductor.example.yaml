@@ -1,0 +1,47 @@
+schema_version: "1.0"
+project:
+  name: demo-project
+  root: "."
+  default_branch: main
+backend:
+  provider: codex_sdk
+  model: null
+  reasoning_effort: null
+  fallback: codex_exec
+workflow:
+  default_mode: auto
+  max_repair_attempts: 2
+  max_parallel_workers: 2
+  require_spec_approval: false
+  require_plan_approval_for_parallel: true
+permissions:
+  network_access: false
+  allow_git_commit: false
+  allow_git_push: false
+  allow_pull_request: false
+  protected_paths:
+    - ".env*"
+    - "**/secrets/**"
+    - "**/production/**"
+repository:
+  ignore:
+    - ".git/**"
+    - ".coductor/**"
+    - "node_modules/**"
+    - ".venv/**"
+    - "vendor/**"
+quality_gates:
+  - id: unit_tests
+    stage: final
+    command: "pytest -q"
+    required: true
+    timeout_seconds: 300
+  - id: lint
+    stage: final
+    command: "ruff check ."
+    required: true
+    timeout_seconds: 120
+budgets:
+  max_run_minutes: 45
+  max_worker_turns: 8
+  max_repair_attempts: 2

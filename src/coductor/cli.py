@@ -1,0 +1,250 @@
+"""Coductor command line interface."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from pathlib import Path
+from typing import Annotated, Any
+
+from coductor.artifacts.serializer import dump_yaml
+from coductor.config.loader import discover_config, load_config, write_config
+from coductor.constants import CODUCTOR_DIR, VERSION
+from coductor.domain.enums import ExecutionMode
+from coductor.services.run_service import RunService
+from coductor.storage.database import Database
+
+try:  # pragma: no cover - fallback keeps local smoke checks useful without dependencies
+    import typer
+except ModuleNotFoundError:  # pragma: no cover
+    typer = None  # type: ignore[assignment]
+
+try:  # pragma: no cover
+    from rich.console import Console
+    from rich.table import Table
+except ModuleNotFoundError:  # pragma: no cover
+    Console = None  # type: ignore[misc, assignment]
+    Table = None  # type: ignore[misc, assignment]
+
+
+console = Console() if Console is not None else None
+if typer is not None:
+    app: Any = typer.Typer(help="Coductor: Deterministic AI Coding Workflow Engine")
+else:  # pragma: no cover
+    app = None
+
+
+def _print(message: str) -> None:
+    if console is not None:
+        console.print(message)
+    else:
+        print(message)
+
+
+def _root(path: str | Path = ".") -> Path:
+    return Path(path).resolve()
+
+
+def _db(root: Path) -> Database:
+    return Database(root / CODUCTOR_DIR / "coductor.sqlite3")
+
+
+def init_project(path: str = ".") -> None:
+    root = _root(path)
+    root.mkdir(parents=True, exist_ok=True)
+    config = discover_config(root)
+    config_path = write_config(root, config)
+    (root / CODUCTOR_DIR / "runs").mkdir(parents=True, exist_ok=True)
+    Database(root / CODUCTOR_DIR / "coductor.sqlite3")
+    _print(f"已生成配置: {config_path}")
+
+
+def run_goal(
+    goal: str,
+    mode: str = "auto",
+    dry_run: bool = False,
+    backend: str | None = None,
+) -> None:
+    root = _root(".")
+    config = load_config(root)
+    if backend:
+        config.backend.provider = backend
+    if dry_run:
+        _print("dry-run: 将执行 Goal → Inspect → Spec → Plan，但不会启动 Worker。")
+        return
+    result = RunService(root, config).run(goal, mode=ExecutionMode(mode))
+    _print(f"Run ID: {result.run_id}")
+    _print(f"状态: {result.status}")
+    _print(f"证据目录: {result.run_dir}")
+
+
+def status_run(run_id: str | None = None, watch: bool = False) -> None:
+    del watch
+    root = _root(".")
+    db = _db(root)
+    row = db.get_run(run_id) if run_id else db.latest_run()
+    if row is None:
+        _print("未找到运行记录。")
+        return
+    if Table is not None and console is not None:
+        table = Table(title="Coductor Run Status")
+        table.add_column("Run ID")
+        table.add_column("Status")
+        table.add_column("Run Dir")
+        table.add_column("Updated")
+        table.add_row(row["run_id"], row["status"], row["run_dir"], row["updated_at"])
+        console.print(table)
+    else:
+        _print(json.dumps(row, ensure_ascii=False, indent=2))
+
+
+def show_run(run_id: str) -> None:
+    root = _root(".")
+    row = _db(root).get_run(run_id)
+    if row is None:
+        _print(f"未找到 Run: {run_id}")
+        return
+    run_dir = Path(row["run_dir"])
+    files = sorted(path.relative_to(run_dir).as_posix() for path in run_dir.rglob("*.yaml"))
+    _print(dump_yaml({"run": row, "artifacts": files}))
+
+
+def resume_run(run_id: str) -> None:
+    root = _root(".")
+    row = _db(root).get_run(run_id)
+    if row is None:
+        _print(f"未找到 Run: {run_id}")
+        return
+    config = load_config(root)
+    result = RunService(root, config).resume(run_id)
+    _print(f"恢复完成: {result.run_id} -> {result.status}")
+
+
+def report_run(run_id: str) -> None:
+    root = _root(".")
+    row = _db(root).get_run(run_id)
+    if row is None:
+        _print(f"未找到 Run: {run_id}")
+        return
+    report = Path(row["run_dir"]) / "delivery-report.md"
+    if not report.exists():
+        _print(f"报告不存在: {report}")
+        return
+    _print(report.read_text(encoding="utf-8"))
+
+
+def doctor() -> None:
+    root = _root(".")
+    config_path = root / "coductor.yaml"
+    checks = {
+        "coductor_version": VERSION,
+        "python": sys.version.split()[0],
+        "git": shutil.which("git") or "missing",
+        "codex": shutil.which("codex") or "missing",
+        "config": "present" if config_path.exists() else "missing",
+        "database": (
+            "present"
+            if (root / CODUCTOR_DIR / "coductor.sqlite3").exists()
+            else "not initialized"
+        ),
+        "network_default": "disabled",
+        "dangerous_defaults": "git_push=false, pull_request=false",
+    }
+    _print(dump_yaml(checks))
+
+
+if typer is not None:
+
+    @app.command("init")  # type: ignore[untyped-decorator]
+    def init_command(
+        path: Annotated[str, typer.Argument(help="被管理仓库路径")] = ".",
+    ) -> None:
+        init_project(path)
+
+    @app.command("run")  # type: ignore[untyped-decorator]
+    def run_command(
+        goal: Annotated[str, typer.Argument(help="自然语言研发目标")],
+        mode: Annotated[
+            str,
+            typer.Option("--mode", help="auto|solo|pipeline|parallel"),
+        ] = "auto",
+        dry_run: Annotated[bool, typer.Option("--dry-run", help="只生成前置计划")] = False,
+        backend: Annotated[
+            str | None,
+            typer.Option("--backend", help="fake|codex_sdk|codex_exec"),
+        ] = None,
+    ) -> None:
+        run_goal(goal, mode, dry_run, backend)
+
+    @app.command("status")  # type: ignore[untyped-decorator]
+    def status_command(
+        run_id: Annotated[str | None, typer.Argument(help="Run ID")] = None,
+        watch: Annotated[bool, typer.Option("--watch", help="持续刷新")] = False,
+    ) -> None:
+        status_run(run_id, watch)
+
+    @app.command("show")  # type: ignore[untyped-decorator]
+    def show_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        show_run(run_id)
+
+    @app.command("resume")  # type: ignore[untyped-decorator]
+    def resume_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        resume_run(run_id)
+
+    @app.command("report")  # type: ignore[untyped-decorator]
+    def report_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        report_run(run_id)
+
+    @app.command("doctor")  # type: ignore[untyped-decorator]
+    def doctor_command() -> None:
+        doctor()
+
+
+def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
+    parser = argparse.ArgumentParser(prog="coductor")
+    sub = parser.add_subparsers(dest="command", required=True)
+    init_parser = sub.add_parser("init")
+    init_parser.add_argument("path", nargs="?", default=".")
+    run_parser = sub.add_parser("run")
+    run_parser.add_argument("goal")
+    run_parser.add_argument("--mode", default="auto")
+    run_parser.add_argument("--dry-run", action="store_true")
+    run_parser.add_argument("--backend")
+    status_parser = sub.add_parser("status")
+    status_parser.add_argument("run_id", nargs="?")
+    status_parser.add_argument("--watch", action="store_true")
+    show_parser = sub.add_parser("show")
+    show_parser.add_argument("run_id")
+    resume_parser = sub.add_parser("resume")
+    resume_parser.add_argument("run_id")
+    report_parser = sub.add_parser("report")
+    report_parser.add_argument("run_id")
+    sub.add_parser("doctor")
+    args = parser.parse_args(argv)
+    if args.command == "init":
+        init_project(args.path)
+    elif args.command == "run":
+        run_goal(args.goal, args.mode, args.dry_run, args.backend)
+    elif args.command == "status":
+        status_run(args.run_id, args.watch)
+    elif args.command == "show":
+        show_run(args.run_id)
+    elif args.command == "resume":
+        resume_run(args.run_id)
+    elif args.command == "report":
+        report_run(args.run_id)
+    elif args.command == "doctor":
+        doctor()
+
+
+def main() -> None:
+    if typer is None:
+        _argparse_main()
+    else:
+        app()
+
+
+if __name__ == "__main__":
+    main()

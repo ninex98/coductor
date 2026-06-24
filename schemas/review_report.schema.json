@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line"
+        },
+        "recommendation": {
+          "title": "Recommendation",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "severity",
+        "category",
+        "description",
+        "recommendation"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    },
+    "ReviewReportData": {
+      "additionalProperties": false,
+      "properties": {
+        "blocking_findings": {
+          "default": 0,
+          "title": "Blocking Findings",
+          "type": "integer"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "requires_repair": {
+          "default": false,
+          "title": "Requires Repair",
+          "type": "boolean"
+        },
+        "reviewed_base_commit": {
+          "title": "Reviewed Base Commit",
+          "type": "string"
+        },
+        "reviewed_head_commit": {
+          "title": "Reviewed Head Commit",
+          "type": "string"
+        },
+        "reviewer_thread_id": {
+          "title": "Reviewer Thread Id",
+          "type": "string"
+        },
+        "verdict": {
+          "default": "pass",
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reviewer_thread_id",
+        "reviewed_base_commit",
+        "reviewed_head_commit"
+      ],
+      "title": "ReviewReportData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/ReviewReportData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "ReviewReportArtifact",
+  "type": "object"
+}

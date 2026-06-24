@@ -1,0 +1,252 @@
+{
+  "$defs": {
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    },
+    "RepairRequestData": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Paths",
+          "type": "array"
+        },
+        "attempt": {
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "evidence_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Paths",
+          "type": "array"
+        },
+        "failed_gates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Failed Gates",
+          "type": "array"
+        },
+        "failure_fingerprints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Failure Fingerprints",
+          "type": "array"
+        },
+        "instruction": {
+          "default": "只修复导致当前 Gate 失败的最小范围，不进行无关重构。",
+          "title": "Instruction",
+          "type": "string"
+        },
+        "max_attempts": {
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "repair_id": {
+          "title": "Repair Id",
+          "type": "string"
+        },
+        "resume_thread_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resume Thread Id"
+        },
+        "target_task_id": {
+          "title": "Target Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repair_id",
+        "target_task_id",
+        "resume_thread_id",
+        "attempt",
+        "max_attempts",
+        "failed_gates",
+        "failure_fingerprints"
+      ],
+      "title": "RepairRequestData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/RepairRequestData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "RepairRequestArtifact",
+  "type": "object"
+}

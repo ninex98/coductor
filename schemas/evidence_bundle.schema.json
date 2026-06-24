@@ -1,0 +1,402 @@
+{
+  "$defs": {
+    "AcceptanceCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "manual"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "status"
+      ],
+      "title": "AcceptanceCoverage",
+      "type": "object"
+    },
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "EvidenceBundleData": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_results": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCoverage"
+          },
+          "title": "Acceptance Results",
+          "type": "array"
+        },
+        "base_commit": {
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "completed_tasks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Completed Tasks",
+          "type": "array"
+        },
+        "evidence_files": {
+          "items": {
+            "$ref": "#/$defs/EvidenceFile"
+          },
+          "title": "Evidence Files",
+          "type": "array"
+        },
+        "final_status": {
+          "title": "Final Status",
+          "type": "string"
+        },
+        "gate_summary": {
+          "$ref": "#/$defs/GateSummary"
+        },
+        "goal_title": {
+          "title": "Goal Title",
+          "type": "string"
+        },
+        "head_commit": {
+          "title": "Head Commit",
+          "type": "string"
+        },
+        "known_risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Known Risks",
+          "type": "array"
+        },
+        "manual_checks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Manual Checks",
+          "type": "array"
+        },
+        "pull_request": {
+          "$ref": "#/$defs/PullRequestInfo"
+        },
+        "review_summary": {
+          "$ref": "#/$defs/ReviewSummary"
+        },
+        "rollback": {
+          "$ref": "#/$defs/Rollback"
+        },
+        "strategy_used": {
+          "$ref": "#/$defs/ExecutionStrategy"
+        }
+      },
+      "required": [
+        "goal_title",
+        "final_status",
+        "strategy_used",
+        "base_commit",
+        "head_commit",
+        "gate_summary",
+        "review_summary",
+        "rollback"
+      ],
+      "title": "EvidenceBundleData",
+      "type": "object"
+    },
+    "EvidenceFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "sha256"
+      ],
+      "title": "EvidenceFile",
+      "type": "object"
+    },
+    "ExecutionStrategy": {
+      "enum": [
+        "solo",
+        "pipeline",
+        "parallel"
+      ],
+      "title": "ExecutionStrategy",
+      "type": "string"
+    },
+    "GateSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "failed": {
+          "title": "Failed",
+          "type": "integer"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "integer"
+        },
+        "required": {
+          "title": "Required",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "required",
+        "passed",
+        "failed"
+      ],
+      "title": "GateSummary",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    },
+    "PullRequestInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "body_path": {
+          "default": "delivery-report.md",
+          "title": "Body Path",
+          "type": "string"
+        },
+        "created": {
+          "default": false,
+          "title": "Created",
+          "type": "boolean"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "title": "PullRequestInfo",
+      "type": "object"
+    },
+    "ReviewSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "blocking_findings": {
+          "title": "Blocking Findings",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blocking_findings"
+      ],
+      "title": "ReviewSummary",
+      "type": "object"
+    },
+    "Rollback": {
+      "additionalProperties": false,
+      "properties": {
+        "instructions": {
+          "title": "Instructions",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "instructions"
+      ],
+      "title": "Rollback",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/EvidenceBundleData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "EvidenceBundleArtifact",
+  "type": "object"
+}

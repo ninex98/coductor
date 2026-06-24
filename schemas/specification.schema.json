@@ -1,0 +1,340 @@
+{
+  "$defs": {
+    "AcceptanceCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "priority": {
+          "default": "required",
+          "enum": [
+            "required",
+            "optional"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        },
+        "verification": {
+          "$ref": "#/$defs/VerificationType"
+        }
+      },
+      "required": [
+        "id",
+        "statement",
+        "verification"
+      ],
+      "title": "AcceptanceCriterion",
+      "type": "object"
+    },
+    "Approval": {
+      "additionalProperties": false,
+      "properties": {
+        "approved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved By"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "title": "Approval",
+      "type": "object"
+    },
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "Assumption": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "requires_human_confirmation": {
+          "default": false,
+          "title": "Requires Human Confirmation",
+          "type": "boolean"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "statement",
+        "confidence"
+      ],
+      "title": "Assumption",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    },
+    "SpecificationData": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCriterion"
+          },
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "approval": {
+          "$ref": "#/$defs/Approval"
+        },
+        "assumptions": {
+          "items": {
+            "$ref": "#/$defs/Assumption"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Constraints",
+          "type": "array"
+        },
+        "in_scope": {
+          "items": {
+            "type": "string"
+          },
+          "title": "In Scope",
+          "type": "array"
+        },
+        "objective": {
+          "title": "Objective",
+          "type": "string"
+        },
+        "out_of_scope": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Out Of Scope",
+          "type": "array"
+        },
+        "risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risks",
+          "type": "array"
+        },
+        "unresolved_questions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unresolved Questions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "objective"
+      ],
+      "title": "SpecificationData",
+      "type": "object"
+    },
+    "VerificationType": {
+      "enum": [
+        "automated",
+        "manual"
+      ],
+      "title": "VerificationType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/SpecificationData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "SpecificationArtifact",
+  "type": "object"
+}

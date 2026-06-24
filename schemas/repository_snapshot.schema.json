@@ -1,0 +1,308 @@
+{
+  "$defs": {
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "DiscoveredCommands": {
+      "additionalProperties": false,
+      "properties": {
+        "build": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Build",
+          "type": "array"
+        },
+        "lint": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Lint",
+          "type": "array"
+        },
+        "test": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Test",
+          "type": "array"
+        },
+        "typecheck": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Typecheck",
+          "type": "array"
+        }
+      },
+      "title": "DiscoveredCommands",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    },
+    "RepositoryManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "title": "RepositoryManifest",
+      "type": "object"
+    },
+    "RepositorySnapshotData": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit": {
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "dirty_worktree": {
+          "title": "Dirty Worktree",
+          "type": "boolean"
+        },
+        "discovered_commands": {
+          "$ref": "#/$defs/DiscoveredCommands"
+        },
+        "existing_documents": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Existing Documents",
+          "type": "array"
+        },
+        "frameworks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Frameworks",
+          "type": "array"
+        },
+        "languages": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Languages",
+          "type": "array"
+        },
+        "manifests": {
+          "items": {
+            "$ref": "#/$defs/RepositoryManifest"
+          },
+          "title": "Manifests",
+          "type": "array"
+        },
+        "protected_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Protected Paths",
+          "type": "array"
+        },
+        "relevant_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Relevant Paths",
+          "type": "array"
+        },
+        "risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risks",
+          "type": "array"
+        },
+        "unknowns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unknowns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "base_commit",
+        "dirty_worktree"
+      ],
+      "title": "RepositorySnapshotData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/RepositorySnapshotData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "RepositorySnapshotArtifact",
+  "type": "object"
+}

@@ -1,0 +1,378 @@
+{
+  "$defs": {
+    "Approval": {
+      "additionalProperties": false,
+      "properties": {
+        "approved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved By"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "title": "Approval",
+      "type": "object"
+    },
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "ExecutionPlanData": {
+      "additionalProperties": false,
+      "properties": {
+        "approval": {
+          "$ref": "#/$defs/Approval"
+        },
+        "base_commit": {
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "graph": {
+          "additionalProperties": true,
+          "title": "Graph",
+          "type": "object"
+        },
+        "strategy": {
+          "$ref": "#/$defs/ExecutionStrategy"
+        },
+        "strategy_reasoning": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Strategy Reasoning",
+          "type": "array"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/PlanTask"
+          },
+          "title": "Tasks",
+          "type": "array"
+        },
+        "validation": {
+          "$ref": "#/$defs/PlanValidation"
+        }
+      },
+      "required": [
+        "strategy",
+        "strategy_reasoning",
+        "base_commit",
+        "tasks"
+      ],
+      "title": "ExecutionPlanData",
+      "type": "object"
+    },
+    "ExecutionStrategy": {
+      "enum": [
+        "solo",
+        "pipeline",
+        "parallel"
+      ],
+      "title": "ExecutionStrategy",
+      "type": "string"
+    },
+    "PlanTask": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "allowed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Paths",
+          "type": "array"
+        },
+        "consumes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumes",
+          "type": "array"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "forbidden_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Forbidden Paths",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "produces": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Produces",
+          "type": "array"
+        },
+        "quality_gates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Quality Gates",
+          "type": "array"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "sandbox": {
+          "$ref": "#/$defs/SandboxMode"
+        },
+        "task_type": {
+          "$ref": "#/$defs/TaskType"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "task_type",
+        "role",
+        "sandbox"
+      ],
+      "title": "PlanTask",
+      "type": "object"
+    },
+    "PlanValidation": {
+      "additionalProperties": false,
+      "properties": {
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "valid": {
+          "default": true,
+          "title": "Valid",
+          "type": "boolean"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "title": "PlanValidation",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    },
+    "SandboxMode": {
+      "enum": [
+        "read_only",
+        "workspace_write"
+      ],
+      "title": "SandboxMode",
+      "type": "string"
+    },
+    "TaskType": {
+      "enum": [
+        "integrated_implementation",
+        "contract_authoring",
+        "verification"
+      ],
+      "title": "TaskType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/ExecutionPlanData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "ExecutionPlanArtifact",
+  "type": "object"
+}

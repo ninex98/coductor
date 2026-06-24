@@ -1,0 +1,1 @@
+"""Verification node placeholder."""

@@ -1,0 +1,334 @@
+{
+  "$defs": {
+    "AcceptanceCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "manual"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "status"
+      ],
+      "title": "AcceptanceCoverage",
+      "type": "object"
+    },
+    "ArtifactInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/ArtifactType"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_type",
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "title": "ArtifactInput",
+      "type": "object"
+    },
+    "ArtifactMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactMetadata",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "enum": [
+        "accepted",
+        "complete",
+        "approved",
+        "validated",
+        "ready",
+        "completed",
+        "passed",
+        "failed",
+        "skipped",
+        "ready_for_human_review",
+        "human_required"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "ArtifactType": {
+      "enum": [
+        "goal",
+        "repository_snapshot",
+        "specification",
+        "execution_plan",
+        "task",
+        "worker_request",
+        "worker_result",
+        "integration",
+        "gate_report",
+        "repair_request",
+        "repair_result",
+        "review_report",
+        "evidence_bundle"
+      ],
+      "title": "ArtifactType",
+      "type": "string"
+    },
+    "GateReportData": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_coverage": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCoverage"
+          },
+          "title": "Acceptance Coverage",
+          "type": "array"
+        },
+        "base_commit": {
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "gates": {
+          "items": {
+            "$ref": "#/$defs/GateResultData"
+          },
+          "title": "Gates",
+          "type": "array"
+        },
+        "head_commit": {
+          "title": "Head Commit",
+          "type": "string"
+        },
+        "next_action": {
+          "enum": [
+            "review",
+            "repair",
+            "human_required"
+          ],
+          "title": "Next Action",
+          "type": "string"
+        },
+        "required_gates_passed": {
+          "title": "Required Gates Passed",
+          "type": "boolean"
+        },
+        "scope": {
+          "default": "final",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "base_commit",
+        "head_commit",
+        "required_gates_passed",
+        "next_action"
+      ],
+      "title": "GateReportData",
+      "type": "object"
+    },
+    "GateResultData": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "duration_ms": {
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "failure_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Fingerprint"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "skipped",
+            "timeout"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "stderr_path": {
+          "title": "Stderr Path",
+          "type": "string"
+        },
+        "stdout_path": {
+          "title": "Stdout Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "required",
+        "status",
+        "command",
+        "exit_code",
+        "duration_ms",
+        "stdout_path",
+        "stderr_path"
+      ],
+      "title": "GateResultData",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ProducerKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "ProducerKind": {
+      "enum": [
+        "human",
+        "system",
+        "model",
+        "tool"
+      ],
+      "title": "ProducerKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/GateReportData"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/ArtifactInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ArtifactMetadata"
+    },
+    "producer": {
+      "$ref": "#/$defs/Producer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactStatus"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "artifact_type",
+    "artifact_id",
+    "run_id",
+    "revision",
+    "status",
+    "created_at",
+    "producer",
+    "data"
+  ],
+  "title": "GateReportArtifact",
+  "type": "object"
+}

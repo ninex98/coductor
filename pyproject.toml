@@ -1,0 +1,48 @@
+[project]
+name = "coductor"
+version = "0.1.0"
+description = "Deterministic AI Coding Workflow Engine"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Coductor Contributors" }]
+dependencies = [
+  "langgraph>=0.2.0",
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "rich>=13.7",
+  "sqlalchemy>=2.0",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10",
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+coductor = "coductor.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["coductor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
