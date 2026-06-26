@@ -14,11 +14,17 @@ def langgraph_thread_config(run_id: str) -> dict[str, dict[str, str]]:
     return {"configurable": {"thread_id": run_id}}
 
 
+def _load_sqlite_saver() -> Any:
+    from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore[import-not-found]
+
+    return SqliteSaver
+
+
 def create_langgraph_sqlite_saver(connection: sqlite3.Connection) -> Any:
     try:
-        from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore[import-not-found]
+        sqlite_saver = _load_sqlite_saver()
     except ModuleNotFoundError as exc:
         raise LangGraphSqliteCheckpointUnavailable(
             "LangGraph SQLite checkpointing requires langgraph-checkpoint-sqlite."
         ) from exc
-    return SqliteSaver(connection)
+    return sqlite_saver(connection)
