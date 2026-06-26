@@ -213,20 +213,14 @@ class RunService:
                     repair_attempts=state.repair_attempts,
                     message="质量门失败且达到停止规则",
                 )
-            state.repair_attempts += 1
-            state.current_stage = "repair_failure"
-            self.save_checkpoint(state)
-            self._event(run_id, "repair_failure", f"repair attempt {state.repair_attempts}")
-            self._repair(
-                repo,
-                run_id,
-                worker_handle,
-                gate_report,
-                state.repair_attempts,
-                repair_target_task_id,
+            self._event(run_id, "repair_failure", f"repair attempt {state.repair_attempts + 1}")
+            state = runner.run_repair(
+                state,
+                builder_handle=worker_handle,
+                gate_report=gate_report,
+                repair=self.repairs,
+                target_task_id=repair_target_task_id,
             )
-            state.current_stage = "run_quality_gates"
-            self.save_checkpoint(state)
 
         self._event(run_id, "run_independent_review", "reviewing worker result")
         review, state = runner.run_review(

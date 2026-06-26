@@ -49,6 +49,52 @@ def test_fake_backend_run_repairs_after_initial_gate_failure(tmp_path: Path) -> 
     assert backend.review_thread_ids != backend.builder_thread_ids
 
 
+def test_run_service_uses_workflow_graph_runner_for_repair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    marker = tmp_path / "repair-marker"
+    command = (
+        f'{sys.executable} -c "from pathlib import Path; import sys; '
+        f"p=Path({str(marker)!r}); "
+        'sys.exit(0 if p.exists() else 1)"'
+    )
+    calls: list[int] = []
+    original = WorkflowGraphRunner.run_repair
+
+    def recording_run_repair(
+        self,
+        state,
+        *,
+        builder_handle,
+        gate_report,
+        repair,
+        target_task_id,
+    ):
+        calls.append(state.repair_attempts)
+        return original(
+            self,
+            state,
+            builder_handle=builder_handle,
+            gate_report=gate_report,
+            repair=repair,
+            target_task_id=target_task_id,
+        )
+
+    monkeypatch.setattr(WorkflowGraphRunner, "run_repair", recording_run_repair)
+    backend = FakeCodingBackend(
+        repair_side_effect=lambda: marker.write_text("fixed", encoding="utf-8")
+    )
+
+    result = RunService(tmp_path, _config(command), backend=backend).run(
+        "修复示例函数并补充测试"
+    )
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result.repair_attempts == 1
+    assert calls == [0]
+
+
 def test_run_stops_at_max_repair_attempts(tmp_path: Path) -> None:
     command = f"{sys.executable} -c 'import sys; sys.exit(1)'"
 
