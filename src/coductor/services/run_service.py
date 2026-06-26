@@ -14,9 +14,7 @@ from coductor.artifacts.models import (
     GateReportData,
     GoalData,
     Producer,
-    RepositorySnapshotData,
     ReviewReportData,
-    SpecificationData,
 )
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.validator import ArtifactLineageValidator
@@ -329,42 +327,6 @@ class RunService:
             metadata=ArtifactMetadata(),
             data=data,
         )
-
-    def _write_goal(
-        self,
-        repo: ArtifactRepository,
-        run_id: str,
-        raw_goal: str,
-        requested_mode: ExecutionMode,
-    ) -> ArtifactEnvelope[GoalData]:
-        return self.artifacts.write_goal(repo, run_id, raw_goal, requested_mode)
-
-    def _write_snapshot(
-        self,
-        repo: ArtifactRepository,
-        run_id: str,
-        goal: ArtifactEnvelope[GoalData],
-    ) -> ArtifactEnvelope[RepositorySnapshotData]:
-        return self.artifacts.write_snapshot(repo, run_id, goal)
-
-    def _write_spec(
-        self,
-        repo: ArtifactRepository,
-        run_id: str,
-        goal: ArtifactEnvelope[GoalData],
-        snapshot: ArtifactEnvelope[RepositorySnapshotData],
-    ) -> ArtifactEnvelope[SpecificationData]:
-        return self.artifacts.write_spec(repo, run_id, goal, snapshot)
-
-    def _write_plan(
-        self,
-        repo: ArtifactRepository,
-        run_id: str,
-        spec: ArtifactEnvelope[SpecificationData],
-        snapshot: ArtifactEnvelope[RepositorySnapshotData],
-        requested_mode: ExecutionMode,
-    ) -> ArtifactEnvelope[Any]:
-        return self.artifacts.write_plan(repo, run_id, spec, snapshot, requested_mode)
 
     def _execute_plan_tasks(
         self,
