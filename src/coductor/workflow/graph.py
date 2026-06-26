@@ -101,8 +101,24 @@ def build_workflow_graph(
         ),
     )
     _add_node(graph, "validate_execution_plan", _stage_node("validate_execution_plan"))
-    _add_node(graph, "materialize_tasks", materialize_tasks_node)
-    _add_node(graph, "dispatch_tasks", dispatch_tasks_node)
+    _add_node(
+        graph,
+        "materialize_tasks",
+        (
+            _with_context(materialize_tasks_node, context)
+            if context is not None
+            else materialize_tasks_node
+        ),
+    )
+    _add_node(
+        graph,
+        "dispatch_tasks",
+        (
+            _with_context(dispatch_tasks_node, context)
+            if context is not None
+            else dispatch_tasks_node
+        ),
+    )
     _add_node(graph, "integrate_changes", integrate_changes_node)
     _add_node(graph, "run_quality_gates", run_quality_gates_node)
     _add_node(graph, "repair_failure", repair_failure_node)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from coductor.artifacts.repository import ArtifactRepository
+from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import RunStatus
+from coductor.services.task_execution_service import TaskExecutionService
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
@@ -96,3 +98,44 @@ def test_workflow_graph_can_execute_contextual_goal_node(tmp_path) -> None:
 
     assert repo.read("00_goal.yaml").data["raw_request"] == "验证真实图节点"
     assert (run_dir / "03_execution_plan.yaml").exists()
+
+
+def test_contextual_workflow_graph_executes_task_dispatch_artifacts(tmp_path) -> None:
+    run_id = "run_contextual_graph_dispatch_000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+        task_execution=TaskExecutionService(
+            tmp_path,
+            config,
+            FakeCodingBackend(),
+            writer,
+        ),
+    )
+    compiled = build_workflow_graph(context=context).compile()
+
+    compiled.invoke(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            raw_goal="创建网页小游戏",
+            requested_mode="solo",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+
+    assert (run_dir / "tasks/T001/task.yaml").exists()
+    assert (run_dir / "tasks/T001/worker_request.yaml").exists()
+    assert (run_dir / "tasks/T001/worker_result.yaml").exists()
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["task_T001"] == "tasks/T001/task.yaml"
+    assert saved.artifacts["worker_result_T001"] == "tasks/T001/worker_result.yaml"

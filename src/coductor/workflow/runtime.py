@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.domain.enums import ExecutionMode
+from coductor.services.task_execution_service import TaskExecutionService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.state import WorkflowState
@@ -16,6 +17,7 @@ class WorkflowRuntimeContext:
     repo: ArtifactRepository
     artifacts: WorkflowArtifactWriter
     checkpoints: WorkflowCheckpointStore
+    task_execution: TaskExecutionService | None = None
 
     def requested_mode(self, state: WorkflowState) -> ExecutionMode:
         return ExecutionMode(state.requested_mode)
