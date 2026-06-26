@@ -14,7 +14,7 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
-from coductor.workflow.nodes import inspect, intake, plan, specify
+from coductor.workflow.nodes import execute, inspect, intake, plan, specify
 from coductor.workflow.state import WorkflowState
 
 
@@ -253,6 +253,49 @@ def test_graph_runner_executes_plan_tasks_and_checkpoint(tmp_path: Path) -> None
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.artifacts["worker_result_T001"] == "tasks/T001/worker_result.yaml"
+
+
+def test_graph_runner_uses_materialize_tasks_node_before_task_execution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    _goal, _snapshot, _spec, plan_artifact, state = runner.run_front_half(
+        state,
+        requested_mode=ExecutionMode.SOLO,
+    )
+    service = TaskExecutionService(tmp_path, config, FakeCodingBackend(), writer)
+    calls: list[str] = []
+    original = execute.materialize_tasks_node
+
+    def recording_materialize_tasks_node(state, *, context=None):
+        calls.append(state.run_id)
+        return original(state, context=context)
+
+    monkeypatch.setattr(execute, "materialize_tasks_node", recording_materialize_tasks_node)
+
+    runner.run_task_execution(state, plan=plan_artifact, tasks=service)
+
+    assert calls == [run_id]
 
 
 def test_graph_runner_runs_integration_and_quality_gates(tmp_path: Path) -> None:

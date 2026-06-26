@@ -213,3 +213,30 @@ def test_create_execution_plan_node_writes_plan_when_runtime_context_is_present(
     assert saved is not None
     assert saved.artifacts["03_execution_plan"] == "03_execution_plan.yaml"
     assert saved.current_stage == "create_execution_plan"
+
+
+def test_materialize_tasks_node_saves_stage_when_runtime_context_is_present(tmp_path) -> None:
+    run_id = "run_materialize_node_000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=WorkflowArtifactWriter(tmp_path, CoductorConfig.default()),
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = materialize_tasks_node(state, context=context)
+
+    assert patch == {"current_stage": "materialize_tasks"}
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.current_stage == "materialize_tasks"

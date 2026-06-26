@@ -25,7 +25,7 @@ from coductor.services.task_execution_service import ExecutedTask, TaskExecution
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
-from coductor.workflow.nodes import inspect, intake, plan, specify
+from coductor.workflow.nodes import execute, inspect, intake, plan, specify
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -125,6 +125,15 @@ class WorkflowGraphRunner:
         tasks: TaskExecutionService,
         on_dispatch: Callable[[str, WorkerHandle], None] | None = None,
     ) -> tuple[list[ExecutedTask], WorkflowState]:
+        execute.materialize_tasks_node(
+            state,
+            context=WorkflowRuntimeContext(
+                repo=self.repo,
+                artifacts=self.artifacts,
+                checkpoints=self.checkpoints,
+            ),
+        )
+
         def record_dispatch(task_id: str, worker_handle: WorkerHandle) -> None:
             if on_dispatch is not None:
                 on_dispatch(task_id, worker_handle)
