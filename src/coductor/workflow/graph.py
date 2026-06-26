@@ -9,11 +9,14 @@ from langgraph.graph import END, START, StateGraph
 
 from coductor.artifacts.models import (
     ArtifactEnvelope,
+    ExecutionPlanData,
+    GateReportData,
     GoalData,
     RepositorySnapshotData,
+    ReviewReportData,
     SpecificationData,
 )
-from coductor.domain.enums import ArtifactType, ExecutionMode
+from coductor.domain.enums import ArtifactType, ExecutionMode, ExecutionStrategy
 from coductor.workflow.nodes.deliver import prepare_evidence_node
 from coductor.workflow.nodes.execute import dispatch_tasks_node, materialize_tasks_node
 from coductor.workflow.nodes.inspect import inspect_repository_node
@@ -119,11 +122,43 @@ def build_workflow_graph(
             else dispatch_tasks_node
         ),
     )
-    _add_node(graph, "integrate_changes", integrate_changes_node)
-    _add_node(graph, "run_quality_gates", run_quality_gates_node)
+    _add_node(
+        graph,
+        "integrate_changes",
+        (
+            _contextual_integrate_node(context)
+            if context is not None and context.verification is not None
+            else integrate_changes_node
+        ),
+    )
+    _add_node(
+        graph,
+        "run_quality_gates",
+        (
+            _contextual_quality_gates_node(context)
+            if context is not None and context.verification is not None
+            else run_quality_gates_node
+        ),
+    )
     _add_node(graph, "repair_failure", repair_failure_node)
-    _add_node(graph, "run_independent_review", run_independent_review_node)
-    _add_node(graph, "prepare_evidence", prepare_evidence_node)
+    _add_node(
+        graph,
+        "run_independent_review",
+        (
+            _contextual_review_node(context)
+            if context is not None and context.review_delivery is not None
+            else run_independent_review_node
+        ),
+    )
+    _add_node(
+        graph,
+        "prepare_evidence",
+        (
+            _contextual_evidence_node(context)
+            if context is not None and context.review_delivery is not None
+            else prepare_evidence_node
+        ),
+    )
 
     graph.add_edge(START, "collect_goal")
     graph.add_edge("collect_goal", "inspect_repository")
@@ -219,3 +254,123 @@ def _contextual_plan_node(context: WorkflowRuntimeContext) -> Callable[[Workflow
         )
 
     return node
+
+
+def _contextual_integrate_node(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        if context.verification is None:
+            raise ValueError("integrate_changes node requires verification service")
+        plan = _read_execution_plan(context)
+        return integrate_changes_node(
+            state,
+            context=context,
+            plan=plan,
+            completed_task_ids=_completed_task_ids(state),
+            verification=context.verification,
+        )
+
+    return node
+
+
+def _contextual_quality_gates_node(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        if context.verification is None:
+            raise ValueError("run_quality_gates node requires verification service")
+        return run_quality_gates_node(
+            state,
+            context=context,
+            verification=context.verification,
+        )
+
+    return node
+
+
+def _contextual_review_node(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        review_delivery = context.review_delivery
+        if review_delivery is None:
+            raise ValueError("run_independent_review node requires review delivery service")
+        gate_report = ArtifactEnvelope[GateReportData].model_validate(
+            context.repo.read(
+                "05_gate_report.yaml",
+                ArtifactType.GATE_REPORT,
+            ).model_dump(mode="json")
+        )
+        return run_independent_review_node(
+            state,
+            context=context,
+            review=lambda: review_delivery.review(
+                context.repo,
+                state.run_id,
+                gate_report,
+                _completed_task_ids(state),
+            ),
+        )
+
+    return node
+
+
+def _contextual_evidence_node(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        review_delivery = context.review_delivery
+        if review_delivery is None:
+            raise ValueError("prepare_evidence node requires review delivery service")
+        goal = ArtifactEnvelope[GoalData].model_validate(
+            context.repo.read("00_goal.yaml", ArtifactType.GOAL).model_dump(mode="json")
+        )
+        plan = _read_execution_plan(context)
+        gate_report = ArtifactEnvelope[GateReportData].model_validate(
+            context.repo.read(
+                "05_gate_report.yaml",
+                ArtifactType.GATE_REPORT,
+            ).model_dump(mode="json")
+        )
+        review = ArtifactEnvelope[ReviewReportData].model_validate(
+            context.repo.read(
+                "06_review.yaml",
+                ArtifactType.REVIEW_REPORT,
+            ).model_dump(mode="json")
+        )
+        return prepare_evidence_node(
+            state,
+            context=context,
+            evidence=lambda: review_delivery.evidence(
+                context.repo,
+                state.run_id,
+                goal,
+                gate_report,
+                review,
+                ExecutionStrategy(plan.data.strategy),
+                _completed_task_ids(state),
+            ),
+        )
+
+    return node
+
+
+def _read_execution_plan(
+    context: WorkflowRuntimeContext,
+) -> ArtifactEnvelope[ExecutionPlanData]:
+    return ArtifactEnvelope[ExecutionPlanData].model_validate(
+        context.repo.read(
+            "03_execution_plan.yaml",
+            ArtifactType.EXECUTION_PLAN,
+        ).model_dump(mode="json")
+    )
+
+
+def _completed_task_ids(state: WorkflowState) -> list[str]:
+    prefix = "worker_result_"
+    return sorted(
+        key.removeprefix(prefix)
+        for key in state.artifacts
+        if key.startswith(prefix)
+    )
