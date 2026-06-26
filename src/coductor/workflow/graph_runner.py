@@ -25,7 +25,7 @@ from coductor.services.task_execution_service import ExecutedTask, TaskExecution
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
-from coductor.workflow.nodes import execute, inspect, intake, plan, specify
+from coductor.workflow.nodes import execute, inspect, intake, integrate, plan, specify
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -163,15 +163,17 @@ class WorkflowGraphRunner:
         completed_task_ids: list[str],
         verification: WorkflowVerificationService,
     ) -> WorkflowState:
-        verification.write_integration(
-            self.repo,
-            state.run_id,
-            plan,
-            completed_task_ids,
+        integrate.integrate_changes_node(
+            state,
+            context=WorkflowRuntimeContext(
+                repo=self.repo,
+                artifacts=self.artifacts,
+                checkpoints=self.checkpoints,
+            ),
+            plan=plan,
+            completed_task_ids=completed_task_ids,
+            verification=verification,
         )
-        state.artifacts["04_integration"] = "04_integration.yaml"
-        state.current_stage = "run_quality_gates"
-        self._save(state)
         return state
 
     def run_quality_gates(

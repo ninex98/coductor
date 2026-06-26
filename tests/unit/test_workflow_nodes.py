@@ -3,6 +3,7 @@ from __future__ import annotations
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ArtifactType, ExecutionMode, RunStatus
+from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
@@ -267,3 +268,45 @@ def test_dispatch_tasks_node_saves_stage_when_runtime_context_is_present(tmp_pat
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.current_stage == "dispatch_tasks"
+
+
+def test_integrate_changes_node_writes_integration_when_runtime_context_is_present(
+    tmp_path,
+) -> None:
+    run_id = "run_integration_node_000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    goal = writer.write_goal(repo, run_id, "修复示例函数", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, run_id, goal)
+    spec = writer.write_spec(repo, run_id, goal, snapshot)
+    plan_artifact = writer.write_plan(repo, run_id, spec, snapshot, ExecutionMode.AUTO)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = integrate_changes_node(
+        state,
+        context=context,
+        plan=plan_artifact,
+        completed_task_ids=["T001"],
+        verification=WorkflowVerificationService(tmp_path, config, writer),
+    )
+
+    assert patch == {
+        "current_stage": "run_quality_gates",
+        "artifacts": {"04_integration": "04_integration.yaml"},
+    }
+    assert repo.read("04_integration.yaml", ArtifactType.INTEGRATION)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["04_integration"] == "04_integration.yaml"
+    assert saved.current_stage == "run_quality_gates"

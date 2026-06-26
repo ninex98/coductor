@@ -14,7 +14,7 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
-from coductor.workflow.nodes import execute, inspect, intake, plan, specify
+from coductor.workflow.nodes import execute, inspect, intake, integrate, plan, specify
 from coductor.workflow.state import WorkflowState
 
 
@@ -385,6 +385,67 @@ def test_graph_runner_runs_integration_and_quality_gates(tmp_path: Path) -> None
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.artifacts["05_gate_report"] == "05_gate_report.yaml"
+
+
+def test_graph_runner_uses_integrate_changes_node_for_integration(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.quality_gates = []
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    _goal, _snapshot, _spec, plan_artifact, state = runner.run_front_half(
+        state,
+        requested_mode=ExecutionMode.SOLO,
+    )
+    verification = WorkflowVerificationService(tmp_path, config, writer)
+    calls: list[str] = []
+    original = integrate.integrate_changes_node
+
+    def recording_integrate_changes_node(
+        state,
+        *,
+        context=None,
+        plan=None,
+        completed_task_ids=None,
+        verification=None,
+    ):
+        calls.append(state.run_id)
+        return original(
+            state,
+            context=context,
+            plan=plan,
+            completed_task_ids=completed_task_ids,
+            verification=verification,
+        )
+
+    monkeypatch.setattr(integrate, "integrate_changes_node", recording_integrate_changes_node)
+
+    runner.run_integration(
+        state,
+        plan=plan_artifact,
+        completed_task_ids=["T001"],
+        verification=verification,
+    )
+
+    assert calls == [run_id]
 
 
 def test_graph_runner_runs_review_and_evidence(tmp_path: Path) -> None:
