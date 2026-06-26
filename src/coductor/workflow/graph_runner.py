@@ -17,6 +17,7 @@ from coductor.artifacts.models import (
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle
 from coductor.domain.enums import ExecutionMode, RunStatus
+from coductor.services.repair_service import RepairService
 from coductor.services.task_execution_service import ExecutedTask, TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
@@ -141,6 +142,37 @@ class WorkflowGraphRunner:
         state.gate_passed = gate_report.data.required_gates_passed
         self._save(state)
         return gate_report, state
+
+    def run_repair(
+        self,
+        state: WorkflowState,
+        *,
+        builder_handle: WorkerHandle,
+        gate_report: ArtifactEnvelope[GateReportData],
+        repair: RepairService,
+        target_task_id: str,
+    ) -> WorkflowState:
+        state.repair_attempts += 1
+        state.current_stage = "repair_failure"
+        self._save(state)
+        repair.repair(
+            self.repo,
+            state.run_id,
+            builder_handle,
+            gate_report,
+            state.repair_attempts,
+            target_task_id,
+        )
+        repair_id = f"R{state.repair_attempts:03d}"
+        state.artifacts[f"repair_request_{repair_id}"] = (
+            f"repairs/{repair_id}/repair_request.yaml"
+        )
+        state.artifacts[f"repair_result_{repair_id}"] = (
+            f"repairs/{repair_id}/repair_result.yaml"
+        )
+        state.current_stage = "run_quality_gates"
+        self._save(state)
+        return state
 
     def run_review(
         self,

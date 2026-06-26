@@ -6,6 +6,7 @@ from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ExecutionMode, ExecutionStrategy
+from coductor.services.repair_service import RepairService
 from coductor.services.review_delivery_service import ReviewDeliveryService
 from coductor.services.task_execution_service import TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
@@ -203,3 +204,54 @@ def test_graph_runner_runs_review_and_evidence(tmp_path: Path) -> None:
     assert (run_dir / "06_review.yaml").exists()
     assert (run_dir / "07_evidence.yaml").exists()
     assert (run_dir / "delivery-report.md").exists()
+
+
+def test_graph_runner_runs_repair_and_checkpoint(tmp_path: Path) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    backend = FakeCodingBackend()
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    _goal, _snapshot, _spec, plan, state = runner.run_front_half(
+        state,
+        requested_mode=ExecutionMode.SOLO,
+    )
+    task_service = TaskExecutionService(tmp_path, config, backend, writer)
+    executed, state = runner.run_task_execution(state, plan=plan, tasks=task_service)
+    verification = WorkflowVerificationService(tmp_path, config, writer)
+    gate_report, state = runner.run_quality_gates(state, verification=verification)
+    repair_service = RepairService(tmp_path, config, backend, writer)
+
+    state = runner.run_repair(
+        state,
+        builder_handle=executed[-1].handle,
+        gate_report=gate_report,
+        repair=repair_service,
+        target_task_id=executed[-1].task_id,
+    )
+
+    assert state.current_stage == "run_quality_gates"
+    assert state.repair_attempts == 1
+    assert state.artifacts["repair_request_R001"] == "repairs/R001/repair_request.yaml"
+    assert state.artifacts["repair_result_R001"] == "repairs/R001/repair_result.yaml"
+    assert (run_dir / "repairs/R001/repair_request.yaml").exists()
+    assert (run_dir / "repairs/R001/repair_result.yaml").exists()
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["repair_result_R001"] == "repairs/R001/repair_result.yaml"
