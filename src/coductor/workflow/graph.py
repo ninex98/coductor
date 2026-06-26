@@ -18,7 +18,11 @@ from coductor.artifacts.models import (
 )
 from coductor.domain.enums import ArtifactType, ExecutionMode, ExecutionStrategy
 from coductor.workflow.nodes.deliver import prepare_evidence_node
-from coductor.workflow.nodes.execute import dispatch_tasks_node, materialize_tasks_node
+from coductor.workflow.nodes.execute import (
+    dispatch_next_stage,
+    dispatch_tasks_node,
+    materialize_tasks_node,
+)
 from coductor.workflow.nodes.inspect import inspect_repository_node
 from coductor.workflow.nodes.intake import collect_goal_node
 from coductor.workflow.nodes.integrate import integrate_changes_node
@@ -168,7 +172,7 @@ def build_workflow_graph(
     graph.add_edge("create_execution_plan", "validate_execution_plan")
     graph.add_edge("validate_execution_plan", "materialize_tasks")
     graph.add_edge("materialize_tasks", "dispatch_tasks")
-    graph.add_edge("dispatch_tasks", "integrate_changes")
+    graph.add_conditional_edges("dispatch_tasks", dispatch_next_stage)
     graph.add_edge("integrate_changes", "run_quality_gates")
     graph.add_conditional_edges("run_quality_gates", _route_after_gates)
     graph.add_edge("repair_failure", "run_quality_gates")

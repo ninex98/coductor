@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from coductor.artifacts.repository import ArtifactRepository
@@ -22,6 +23,7 @@ class WorkflowRuntimeContext:
     task_execution: TaskExecutionService | None = None
     verification: WorkflowVerificationService | None = None
     review_delivery: ReviewDeliveryService | None = None
+    on_dispatch: Callable[[str], None] | None = None
 
     def requested_mode(self, state: WorkflowState) -> ExecutionMode:
         return ExecutionMode(state.requested_mode)

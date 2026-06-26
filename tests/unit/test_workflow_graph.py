@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from coductor.artifacts.repository import ArtifactRepository
+from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
-from coductor.domain.enums import RunStatus
+from coductor.domain.enums import RunStatus, WorkerStatus
 from coductor.services.review_delivery_service import ReviewDeliveryService
 from coductor.services.task_execution_service import TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
@@ -183,3 +184,60 @@ def test_contextual_workflow_graph_executes_happy_path_delivery(tmp_path) -> Non
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.artifacts["07_evidence"] == "07_evidence.yaml"
+
+
+class _FailingBackend:
+    def start_worker(self, request: WorkerRequest) -> WorkerHandle:
+        return WorkerHandle(worker_id=request.worker_id, thread_id="thread_failed")
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        return WorkerResult(
+            worker_id=request.worker_id,
+            thread_id=handle.thread_id,
+            summary="worker failed",
+            exit_reason="failed",
+        )
+
+    def cancel_worker(self, handle: WorkerHandle) -> None:
+        return None
+
+    def get_status(self, handle: WorkerHandle) -> WorkerStatus:
+        return WorkerStatus.FAILED
+
+
+def test_contextual_workflow_graph_stops_after_worker_failure(tmp_path) -> None:
+    run_id = "run_contextual_graph_worker_failure_000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    backend = _FailingBackend()
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+        task_execution=TaskExecutionService(tmp_path, config, backend, writer),
+        verification=WorkflowVerificationService(tmp_path, config, writer),
+        review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
+    )
+    compiled = build_workflow_graph(context=context).compile()
+
+    result = compiled.invoke(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            raw_goal="创建网页小游戏",
+            requested_mode="solo",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+
+    assert result["status"] == RunStatus.HUMAN_REQUIRED
+    assert "worker failed" in result["last_error"]
+    assert (run_dir / "tasks/T001/worker_result.yaml").exists()
+    assert not (run_dir / "04_integration.yaml").exists()
+    assert not (run_dir / "07_evidence.yaml").exists()

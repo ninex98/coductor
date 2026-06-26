@@ -37,8 +37,10 @@ from coductor.services.workflow_verification_service import WorkflowVerification
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
+from coductor.workflow.graph import build_workflow_graph
 from coductor.workflow.graph_runner import WorkflowGraphRunner
 from coductor.workflow.langgraph_checkpoint import LangGraphCheckpointStore
+from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
 
@@ -92,6 +94,12 @@ class RunService:
             requested_mode=str(requested_mode),
             run_dir=run_dir.as_posix(),
         )
+        if not self.config.quality_gates:
+            return self._run_contextual_graph_happy_path(
+                state,
+                repo=repo,
+                run_dir=run_dir,
+            )
         runner = WorkflowGraphRunner(
             repo=repo,
             artifacts=self.artifacts,
@@ -254,6 +262,50 @@ class RunService:
             status=state.status,
             run_dir=run_dir.as_posix(),
             repair_attempts=state.repair_attempts,
+            message=message,
+        )
+
+    def _run_contextual_graph_happy_path(
+        self,
+        state: WorkflowState,
+        *,
+        repo: ArtifactRepository,
+        run_dir: Path,
+    ) -> RunResult:
+        run_id = state.run_id
+        self.save_checkpoint(state)
+        self._event(run_id, "collect_goal", "accepted user goal")
+        self._event(run_id, "inspect_repository", "capturing repository snapshot")
+        self._event(run_id, "draft_spec", "writing specification artifact")
+        self._event(run_id, "create_execution_plan", "choosing execution strategy")
+        self._event(run_id, "materialize_tasks", "preparing worker tasks")
+        context = WorkflowRuntimeContext(
+            repo=repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+            task_execution=self.task_execution,
+            verification=self.verification,
+            review_delivery=self.review_delivery,
+            on_dispatch=lambda task_id: self._event(
+                run_id,
+                "dispatch_tasks",
+                f"dispatch {task_id}",
+            ),
+        )
+        graph_result = build_workflow_graph(context=context).compile().invoke(state)
+        final_state = WorkflowState.model_validate(graph_result)
+        self._store_run(final_state, run_dir)
+        self.save_checkpoint(final_state)
+        message = (
+            "run completed"
+            if final_state.status == RunStatus.READY_FOR_HUMAN_REVIEW
+            else final_state.last_error or "evidence requires human attention"
+        )
+        return RunResult(
+            run_id=run_id,
+            status=final_state.status,
+            run_dir=run_dir.as_posix(),
+            repair_attempts=final_state.repair_attempts,
             message=message,
         )
 

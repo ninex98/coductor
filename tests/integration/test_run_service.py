@@ -265,9 +265,7 @@ def test_run_service_uses_workflow_graph_runner_for_front_half(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    config = CoductorConfig.default()
-    config.backend.provider = "fake"
-    config.quality_gates = []
+    config = _config(f"{sys.executable} -c 'print(1)'")
     calls: list[str] = []
     original = WorkflowGraphRunner.run_front_half
 
@@ -283,13 +281,30 @@ def test_run_service_uses_workflow_graph_runner_for_front_half(
     assert calls == [result.run_id]
 
 
-def test_run_service_reuses_one_workflow_graph_runner_per_run(
+def test_run_service_uses_contextual_graph_for_no_gate_happy_path(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     config = CoductorConfig.default()
     config.backend.provider = "fake"
     config.quality_gates = []
+
+    def fail_runner_front_half(self, state, *, requested_mode):
+        raise AssertionError("RunService should use contextual graph for no-gate happy path")
+
+    monkeypatch.setattr(WorkflowGraphRunner, "run_front_half", fail_runner_front_half)
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert (Path(result.run_dir) / "07_evidence.yaml").exists()
+
+
+def test_run_service_reuses_one_workflow_graph_runner_per_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = _config(f"{sys.executable} -c 'print(1)'")
     created: list[object] = []
     original_init = WorkflowGraphRunner.__init__
 
@@ -309,9 +324,7 @@ def test_run_service_uses_workflow_graph_runner_for_task_execution(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    config = CoductorConfig.default()
-    config.backend.provider = "fake"
-    config.quality_gates = []
+    config = _config(f"{sys.executable} -c 'print(1)'")
     calls: list[str] = []
     original = WorkflowGraphRunner.run_task_execution
 
@@ -352,9 +365,7 @@ def test_run_service_uses_workflow_graph_runner_for_verification(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    config = CoductorConfig.default()
-    config.backend.provider = "fake"
-    config.quality_gates = []
+    config = _config(f"{sys.executable} -c 'print(1)'")
     calls: list[str] = []
     original_integration = WorkflowGraphRunner.run_integration
     original_gates = WorkflowGraphRunner.run_quality_gates
@@ -393,9 +404,7 @@ def test_run_service_uses_workflow_graph_runner_for_delivery(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    config = CoductorConfig.default()
-    config.backend.provider = "fake"
-    config.quality_gates = []
+    config = _config(f"{sys.executable} -c 'print(1)'")
     calls: list[str] = []
     original_review = WorkflowGraphRunner.run_review
     original_evidence = WorkflowGraphRunner.run_evidence
