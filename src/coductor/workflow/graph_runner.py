@@ -22,7 +22,7 @@ from coductor.services.task_execution_service import ExecutedTask, TaskExecution
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
-from coductor.workflow.nodes import intake
+from coductor.workflow.nodes import inspect, intake
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -54,22 +54,26 @@ class WorkflowGraphRunner:
         if state.raw_goal is None:
             raise ValueError("workflow state must include raw_goal")
         state.requested_mode = str(requested_mode)
+        context = WorkflowRuntimeContext(
+            repo=self.repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+        )
         intake.collect_goal_node(
             state,
-            context=WorkflowRuntimeContext(
-                repo=self.repo,
-                artifacts=self.artifacts,
-                checkpoints=self.checkpoints,
-            ),
+            context=context,
         )
         goal = ArtifactEnvelope[GoalData].model_validate(
             self.repo.read("00_goal.yaml", ArtifactType.GOAL).model_dump(mode="json")
         )
 
-        snapshot = self.artifacts.write_snapshot(self.repo, state.run_id, goal)
-        state.artifacts["01_repository_snapshot"] = "01_repository_snapshot.yaml"
-        state.current_stage = "draft_spec"
-        self._save(state)
+        inspect.inspect_repository_node(state, context=context, goal=goal)
+        snapshot = ArtifactEnvelope[RepositorySnapshotData].model_validate(
+            self.repo.read(
+                "01_repository_snapshot.yaml",
+                ArtifactType.REPOSITORY_SNAPSHOT,
+            ).model_dump(mode="json")
+        )
 
         spec = self.artifacts.write_spec(self.repo, state.run_id, goal, snapshot)
         state.artifacts["02_spec"] = "02_spec.yaml"

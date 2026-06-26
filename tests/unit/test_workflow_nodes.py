@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.config.models import CoductorConfig
-from coductor.domain.enums import RunStatus
+from coductor.domain.enums import ArtifactType, ExecutionMode, RunStatus
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
@@ -112,3 +112,33 @@ def test_collect_goal_node_writes_goal_artifact_when_runtime_context_is_present(
     assert saved is not None
     assert saved.artifacts["00_goal"] == "00_goal.yaml"
     assert saved.current_stage == "inspect_repository"
+
+
+def test_inspect_repository_node_writes_snapshot_when_runtime_context_is_present(tmp_path) -> None:
+    run_id = "run_inspect_node_0000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, CoductorConfig.default())
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    goal = writer.write_goal(repo, run_id, "修复示例函数", ExecutionMode.AUTO)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = inspect_repository_node(state, context=context, goal=goal)
+
+    assert patch == {
+        "current_stage": "draft_spec",
+        "artifacts": {"01_repository_snapshot": "01_repository_snapshot.yaml"},
+    }
+    assert repo.read("01_repository_snapshot.yaml", ArtifactType.REPOSITORY_SNAPSHOT)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["01_repository_snapshot"] == "01_repository_snapshot.yaml"
+    assert saved.current_stage == "draft_spec"
