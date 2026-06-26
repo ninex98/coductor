@@ -49,9 +49,11 @@ class ReportService:
         lines.extend(files or ["No YAML artifacts found."])
         return "\n".join(lines) + "\n"
 
-    def logs(self, run_id: str) -> str:
+    def logs(self, run_id: str, *, stage_filter: str | None = None) -> str:
         self.run_context(run_id, "logs")
         events = self.database.list_events(run_id)
+        if stage_filter is not None:
+            events = [event for event in events if event["stage"] == stage_filter]
         lines = self._header(
             run_id=run_id,
             stage="logs",

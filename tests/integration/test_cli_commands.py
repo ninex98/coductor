@@ -247,6 +247,30 @@ def test_cli_logs_lists_run_events(
     assert "dispatch T001" in result.output
 
 
+def test_cli_logs_filters_by_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.add_event(
+        "run_abc",
+        "run_quality_gates",
+        "gate passed",
+        "2026-06-24T00:00:02Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["logs", "run_abc", "--stage", "dispatch_tasks"])
+
+    assert result.exit_code == 0
+    assert "dispatch_tasks" in result.output
+    assert "dispatch T001" in result.output
+    assert "run_quality_gates" not in result.output
+    assert "gate passed" not in result.output
+
+
 def test_cli_explain_summarizes_recoverability_and_next_command(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -277,11 +277,11 @@ def artifacts_run(run_id: str) -> None:
         _exit_with_report_error(service, error)
 
 
-def logs_run(run_id: str) -> None:
+def logs_run(run_id: str, stage: str | None = None) -> None:
     root = _root(".")
     service = _report_service(root)
     try:
-        _print(service.logs(run_id))
+        _print(service.logs(run_id, stage_filter=stage))
     except RunReportError as error:
         _exit_with_report_error(service, error)
 
@@ -431,8 +431,14 @@ if typer is not None:
         artifacts_run(run_id)
 
     @app.command("logs", help="查看事件日志 / Show run event logs.")  # type: ignore[untyped-decorator]
-    def logs_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
-        logs_run(run_id)
+    def logs_command(
+        run_id: Annotated[str, typer.Argument(help="Run ID")],
+        stage: Annotated[
+            str | None,
+            typer.Option("--stage", help="按阶段过滤 / Filter by stage"),
+        ] = None,
+    ) -> None:
+        logs_run(run_id, stage)
 
     @app.command("explain", help="解释状态和下一步 / Explain state and next command.")  # type: ignore[untyped-decorator]
     def explain_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
@@ -487,6 +493,7 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     artifacts_parser.add_argument("run_id")
     logs_parser = sub.add_parser("logs")
     logs_parser.add_argument("run_id")
+    logs_parser.add_argument("--stage")
     explain_parser = sub.add_parser("explain")
     explain_parser.add_argument("run_id")
     for command in ["approve", "pause", "stop", "verify", "review"]:
@@ -509,7 +516,7 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     elif args.command == "artifacts":
         artifacts_run(args.run_id)
     elif args.command == "logs":
-        logs_run(args.run_id)
+        logs_run(args.run_id, args.stage)
     elif args.command == "explain":
         explain_run(args.run_id)
     elif args.command in {"approve", "pause", "stop", "verify", "review"}:
