@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
-from coductor.artifacts.models import ExecutionPlanData, PlanTask, SpecificationData
+from coductor.artifacts.models import (
+    ExecutionPlanData,
+    PlanTask,
+    RepositorySnapshotData,
+    SpecificationData,
+)
 from coductor.domain.enums import ExecutionMode, ExecutionStrategy, SandboxMode, TaskType
+from coductor.planning.spec_builder import derive_allowed_paths, derive_quality_gates
 from coductor.planning.validator import PlanValidator
 
 
@@ -45,12 +51,22 @@ def choose_strategy(
     )
 
 
-def create_solo_plan(spec: SpecificationData, base_commit: str) -> ExecutionPlanData:
+def create_solo_plan(
+    spec: SpecificationData,
+    base_commit: str,
+    snapshot: RepositorySnapshotData | None = None,
+    *,
+    quality_gate_ids: list[str] | None = None,
+) -> ExecutionPlanData:
     criteria_ids = [
         criterion.id
         for criterion in spec.acceptance_criteria
         if criterion.priority == "required"
     ]
+    allowed_paths = derive_allowed_paths(
+        spec.objective,
+        snapshot or RepositorySnapshotData(base_commit=base_commit, dirty_worktree=False),
+    )
     task = PlanTask(
         id="T001",
         title="完成目标契约中的功能实现和相关测试",
@@ -59,10 +75,10 @@ def create_solo_plan(spec: SpecificationData, base_commit: str) -> ExecutionPlan
         depends_on=[],
         consumes=["02_spec.yaml", "01_repository_snapshot.yaml"],
         produces=["tasks/T001/worker_result.yaml"],
-        allowed_paths=["src/**", "tests/**", "docs/**", "examples/**"],
+        allowed_paths=allowed_paths,
         forbidden_paths=[".env*", "**/secrets/**", "**/production/**"],
         acceptance_criteria=criteria_ids,
-        quality_gates=["unit_tests"],
+        quality_gates=derive_quality_gates(_gate_ids_or_default(quality_gate_ids), criteria_ids),
         sandbox=SandboxMode.WORKSPACE_WRITE,
     )
     plan = ExecutionPlanData(
@@ -85,6 +101,8 @@ def create_pipeline_plan(
     spec: SpecificationData,
     base_commit: str,
     reasoning: list[str],
+    *,
+    quality_gate_ids: list[str] | None = None,
 ) -> ExecutionPlanData:
     criteria_ids = [
         criterion.id
@@ -102,7 +120,7 @@ def create_pipeline_plan(
         allowed_paths=["src/**", "tests/**", "docs/**", "examples/**", "contracts/**"],
         forbidden_paths=[".env*", "**/secrets/**", "**/production/**"],
         acceptance_criteria=[],
-        quality_gates=["unit_tests"],
+        quality_gates=derive_quality_gates(_gate_ids_or_default(quality_gate_ids), []),
         sandbox=SandboxMode.WORKSPACE_WRITE,
     )
     consumer_task = PlanTask(
@@ -121,7 +139,7 @@ def create_pipeline_plan(
         allowed_paths=["src/**", "tests/**", "docs/**", "examples/**"],
         forbidden_paths=[".env*", "**/secrets/**", "**/production/**"],
         acceptance_criteria=criteria_ids,
-        quality_gates=["unit_tests"],
+        quality_gates=derive_quality_gates(_gate_ids_or_default(quality_gate_ids), criteria_ids),
         sandbox=SandboxMode.WORKSPACE_WRITE,
     )
     plan = ExecutionPlanData(
@@ -147,12 +165,16 @@ def create_parallel_plan(
     spec: SpecificationData,
     base_commit: str,
     reasoning: list[str],
+    snapshot: RepositorySnapshotData | None = None,
+    *,
+    quality_gate_ids: list[str] | None = None,
 ) -> ExecutionPlanData:
     criteria_ids = [
         criterion.id
         for criterion in spec.acceptance_criteria
         if criterion.priority == "required"
     ]
+    del snapshot
     objective = spec.objective.lower()
     safe_docs_examples = (
         ("文档" in objective and "示例" in objective)
@@ -171,7 +193,7 @@ def create_parallel_plan(
         allowed_paths=first_paths,
         forbidden_paths=[".env*", "**/secrets/**", "**/production/**"],
         acceptance_criteria=[],
-        quality_gates=["unit_tests"],
+        quality_gates=derive_quality_gates(_gate_ids_or_default(quality_gate_ids), []),
         sandbox=SandboxMode.WORKSPACE_WRITE,
     )
     second_task = PlanTask(
@@ -185,7 +207,7 @@ def create_parallel_plan(
         allowed_paths=second_paths,
         forbidden_paths=[".env*", "**/secrets/**", "**/production/**"],
         acceptance_criteria=criteria_ids,
-        quality_gates=["unit_tests"],
+        quality_gates=derive_quality_gates(_gate_ids_or_default(quality_gate_ids), criteria_ids),
         sandbox=SandboxMode.WORKSPACE_WRITE,
     )
     plan = ExecutionPlanData(
@@ -209,3 +231,7 @@ def create_parallel_plan(
         },
     ).validate(plan)
     return plan
+
+
+def _gate_ids_or_default(quality_gate_ids: list[str] | None) -> list[str]:
+    return ["unit_tests"] if quality_gate_ids is None else quality_gate_ids

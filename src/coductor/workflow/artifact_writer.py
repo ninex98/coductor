@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from coductor.artifacts.models import (
-    AcceptanceCriterion,
     ArtifactEnvelope,
     ArtifactInput,
     ArtifactMetadata,
@@ -23,7 +22,6 @@ from coductor.domain.enums import (
     ExecutionMode,
     ExecutionStrategy,
     ProducerKind,
-    VerificationType,
 )
 from coductor.domain.ids import new_id
 from coductor.planning.planner import (
@@ -32,6 +30,7 @@ from coductor.planning.planner import (
     create_pipeline_plan,
     create_solo_plan,
 )
+from coductor.planning.spec_builder import build_acceptance_criteria, derive_in_scope
 from coductor.repository.inspector import RepositoryInspector
 
 
@@ -129,21 +128,14 @@ class WorkflowArtifactWriter:
     ) -> ArtifactEnvelope[SpecificationData]:
         data = SpecificationData(
             objective=goal.data.raw_request,
-            in_scope=["按目标完成最小可验证变更", "补充或运行相关验证"],
+            in_scope=derive_in_scope(goal.data.raw_request),
             out_of_scope=["Web 控制台", "自动 PR", "远程推送", "生产环境操作"],
             constraints=[
                 "危险能力默认关闭",
                 "完成状态只由质量门和审查证据决定",
             ],
             assumptions=[],
-            acceptance_criteria=[
-                AcceptanceCriterion(
-                    id="AC001",
-                    statement="必需质量门通过，且生成 evidence bundle",
-                    verification=VerificationType.AUTOMATED,
-                    priority="required",
-                )
-            ],
+            acceptance_criteria=build_acceptance_criteria(goal.data.raw_request),
             risks=snapshot.data.risks,
             unresolved_questions=[],
         )
@@ -178,15 +170,23 @@ class WorkflowArtifactWriter:
                 spec.data,
                 snapshot.data.base_commit,
                 decision.reasoning,
+                quality_gate_ids=[gate.id for gate in self.config.quality_gates],
             )
         elif decision.strategy == ExecutionStrategy.PARALLEL:
             data = create_parallel_plan(
                 spec.data,
                 snapshot.data.base_commit,
                 decision.reasoning,
+                snapshot.data,
+                quality_gate_ids=[gate.id for gate in self.config.quality_gates],
             )
         else:
-            data = create_solo_plan(spec.data, snapshot.data.base_commit)
+            data = create_solo_plan(
+                spec.data,
+                snapshot.data.base_commit,
+                snapshot.data,
+                quality_gate_ids=[gate.id for gate in self.config.quality_gates],
+            )
         envelope = self.envelope(
             run_id=run_id,
             artifact_type=ArtifactType.EXECUTION_PLAN,
