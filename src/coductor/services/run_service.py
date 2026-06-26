@@ -342,33 +342,6 @@ class RunService:
             data=data,
         )
 
-    def _execute_plan_tasks(
-        self,
-        repo: ArtifactRepository,
-        run_id: str,
-        plan: ArtifactEnvelope[Any],
-        state: WorkflowState,
-    ) -> list[tuple[str, WorkerHandle]]:
-        def on_dispatch(task_id: str, worker_handle: WorkerHandle) -> None:
-            del worker_handle
-            task_path = f"tasks/{task_id}/task.yaml"
-            state.artifacts[f"task_{task_id}"] = task_path
-            state.current_stage = "dispatch_tasks"
-            self.save_checkpoint(state)
-            self._event(run_id, "dispatch_tasks", f"dispatch {task_id}")
-            state.artifacts[f"worker_result_{task_id}"] = (
-                f"tasks/{task_id}/worker_result.yaml"
-            )
-            self.save_checkpoint(state)
-
-        executed = self.task_execution.execute_plan_tasks(
-            repo,
-            run_id,
-            plan,
-            on_dispatch=on_dispatch,
-        )
-        return [(item.task_id, item.handle) for item in executed]
-
     def _repair(
         self,
         repo: ArtifactRepository,
