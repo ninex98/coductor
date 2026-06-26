@@ -17,6 +17,7 @@ from coductor.workflow.nodes.repair import repair_failure_node
 from coductor.workflow.nodes.review import run_independent_review_node
 from coductor.workflow.nodes.specify import draft_spec_node
 from coductor.workflow.nodes.verify import run_quality_gates_node
+from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
 WORKFLOW_NODES = [
@@ -62,9 +63,16 @@ def _route_after_review(state: WorkflowState) -> str:
     return "prepare_evidence" if state.review_passed else "repair_failure"
 
 
-def build_workflow_graph() -> StateGraph[WorkflowState]:
+def build_workflow_graph(
+    *,
+    context: WorkflowRuntimeContext | None = None,
+) -> StateGraph[WorkflowState]:
     graph = StateGraph(WorkflowState)
-    _add_node(graph, "collect_goal", collect_goal_node)
+    _add_node(
+        graph,
+        "collect_goal",
+        _with_context(collect_goal_node, context) if context is not None else collect_goal_node,
+    )
     _add_node(graph, "inspect_repository", inspect_repository_node)
     _add_node(graph, "draft_spec", draft_spec_node)
     _add_node(graph, "validate_spec", _stage_node("validate_spec"))
@@ -112,3 +120,13 @@ def _add_node(
     # LangGraph accepts state-patch callables at runtime; its overloads are
     # intentionally broad and currently too complex for mypy to infer here.
     graph.add_node(name, action)  # type: ignore[call-overload]
+
+
+def _with_context(
+    action: Callable[..., NodePatch],
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        return action(state, context=context)
+
+    return node
