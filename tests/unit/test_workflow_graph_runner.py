@@ -14,7 +14,7 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
-from coductor.workflow.nodes import execute, inspect, intake, integrate, plan, specify
+from coductor.workflow.nodes import execute, inspect, intake, integrate, plan, specify, verify
 from coductor.workflow.state import WorkflowState
 
 
@@ -446,6 +446,47 @@ def test_graph_runner_uses_integrate_changes_node_for_integration(
     )
 
     assert calls == [run_id]
+
+
+def test_graph_runner_uses_quality_gates_node_for_gate_report(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.quality_gates = []
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    verification = WorkflowVerificationService(tmp_path, config, writer)
+    calls: list[str] = []
+    original = verify.run_quality_gates_node
+
+    def recording_run_quality_gates_node(state, *, context=None, verification=None):
+        calls.append(state.run_id)
+        return original(state, context=context, verification=verification)
+
+    monkeypatch.setattr(verify, "run_quality_gates_node", recording_run_quality_gates_node)
+
+    gate_report, state = runner.run_quality_gates(state, verification=verification)
+
+    assert calls == [run_id]
+    assert gate_report.data.required_gates_passed
+    assert state.artifacts["05_gate_report"] == "05_gate_report.yaml"
 
 
 def test_graph_runner_runs_review_and_evidence(tmp_path: Path) -> None:

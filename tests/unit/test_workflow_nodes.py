@@ -310,3 +310,42 @@ def test_integrate_changes_node_writes_integration_when_runtime_context_is_prese
     assert saved is not None
     assert saved.artifacts["04_integration"] == "04_integration.yaml"
     assert saved.current_stage == "run_quality_gates"
+
+
+def test_run_quality_gates_node_writes_gate_report_when_runtime_context_is_present(
+    tmp_path,
+) -> None:
+    run_id = "run_gates_node_000000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.quality_gates = []
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = run_quality_gates_node(
+        state,
+        context=context,
+        verification=WorkflowVerificationService(tmp_path, config, writer),
+    )
+
+    assert patch == {
+        "current_stage": "run_quality_gates",
+        "artifacts": {"05_gate_report": "05_gate_report.yaml"},
+        "gate_passed": True,
+    }
+    assert repo.read("05_gate_report.yaml", ArtifactType.GATE_REPORT)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["05_gate_report"] == "05_gate_report.yaml"
+    assert saved.current_stage == "run_quality_gates"
+    assert saved.gate_passed is True

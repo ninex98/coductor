@@ -25,7 +25,7 @@ from coductor.services.task_execution_service import ExecutedTask, TaskExecution
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
-from coductor.workflow.nodes import execute, inspect, intake, integrate, plan, specify
+from coductor.workflow.nodes import execute, inspect, intake, integrate, plan, specify, verify
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -182,11 +182,20 @@ class WorkflowGraphRunner:
         *,
         verification: WorkflowVerificationService,
     ) -> tuple[ArtifactEnvelope[GateReportData], WorkflowState]:
-        gate_report = verification.run_gates(self.repo, state.run_id)
-        state.artifacts["05_gate_report"] = "05_gate_report.yaml"
-        state.current_stage = "run_quality_gates"
-        state.gate_passed = gate_report.data.required_gates_passed
-        self._save(state)
+        verify.run_quality_gates_node(
+            state,
+            context=WorkflowRuntimeContext(
+                repo=self.repo,
+                artifacts=self.artifacts,
+                checkpoints=self.checkpoints,
+            ),
+            verification=verification,
+        )
+        gate_report = self._read_typed_artifact(
+            "05_gate_report.yaml",
+            ArtifactType.GATE_REPORT,
+            ArtifactEnvelope[GateReportData],
+        )
         return gate_report, state
 
     def run_repair(
