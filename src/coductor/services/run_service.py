@@ -118,7 +118,21 @@ class RunService:
         state.current_stage = "materialize_tasks"
         self.save_checkpoint(state)
         self._event(run_id, "materialize_tasks", "preparing worker tasks")
-        executed_tasks = self._execute_plan_tasks(repo, run_id, plan, state)
+        executed, state = WorkflowGraphRunner(
+            repo=repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+        ).run_task_execution(
+            state,
+            plan=plan,
+            tasks=self.task_execution,
+            on_dispatch=lambda task_id, _handle: self._event(
+                run_id,
+                "dispatch_tasks",
+                f"dispatch {task_id}",
+            ),
+        )
+        executed_tasks = [(item.task_id, item.handle) for item in executed]
         if not executed_tasks:
             state.status = RunStatus.HUMAN_REQUIRED
             state.current_stage = "human_required"

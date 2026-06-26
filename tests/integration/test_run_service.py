@@ -116,3 +116,46 @@ def test_run_service_uses_workflow_graph_runner_for_front_half(
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert calls == [result.run_id]
+
+
+def test_run_service_uses_workflow_graph_runner_for_task_execution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    calls: list[str] = []
+    original = WorkflowGraphRunner.run_task_execution
+
+    def recording_run_task_execution(self, state, *, plan, tasks, on_dispatch=None):
+        calls.append(state.run_id)
+        return original(self, state, plan=plan, tasks=tasks, on_dispatch=on_dispatch)
+
+    monkeypatch.setattr(
+        WorkflowGraphRunner,
+        "run_task_execution",
+        recording_run_task_execution,
+    )
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert calls == [result.run_id]
+
+
+def test_run_service_reports_dispatch_progress_from_task_runner(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    events: list[tuple[str, str]] = []
+
+    result = RunService(
+        tmp_path,
+        config,
+        backend=FakeCodingBackend(),
+        progress=lambda stage, message: events.append((stage, message)),
+    ).run("创建网页小游戏")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert ("dispatch_tasks", "dispatch T001") in events

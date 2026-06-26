@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from coductor.artifacts.models import (
@@ -83,8 +84,11 @@ class WorkflowGraphRunner:
         *,
         plan: ArtifactEnvelope[Any],
         tasks: TaskExecutionService,
+        on_dispatch: Callable[[str, WorkerHandle], None] | None = None,
     ) -> tuple[list[ExecutedTask], WorkflowState]:
-        def on_dispatch(task_id: str, worker_handle: WorkerHandle) -> None:
+        def record_dispatch(task_id: str, worker_handle: WorkerHandle) -> None:
+            if on_dispatch is not None:
+                on_dispatch(task_id, worker_handle)
             del worker_handle
             state.artifacts[f"task_{task_id}"] = f"tasks/{task_id}/task.yaml"
             state.current_stage = "dispatch_tasks"
@@ -98,7 +102,7 @@ class WorkflowGraphRunner:
             self.repo,
             state.run_id,
             plan,
-            on_dispatch=on_dispatch,
+            on_dispatch=record_dispatch,
         )
         return executed, state
 
