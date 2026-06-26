@@ -42,6 +42,10 @@ class ReportService:
             recoverable=True,
             next_command=f"coductor show {run_id}",
         )
+        checkpoint = self._checkpoint(run_id)
+        if checkpoint is not None:
+            lines.extend(self._checkpoint_lines(checkpoint))
+            lines.append("")
         lines.extend(files or ["No YAML artifacts found."])
         return "\n".join(lines) + "\n"
 

@@ -169,6 +169,33 @@ def test_cli_artifacts_lists_yaml_files(
     assert "tasks/T001/task.yaml" in result.output
 
 
+def test_cli_artifacts_includes_checkpoint_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs").save(
+        WorkflowState(
+            run_id="run_abc",
+            status=RunStatus.RUNNING,
+            current_stage="dispatch_tasks",
+            run_dir=run_dir.as_posix(),
+            completed_task_ids=["T001"],
+        ),
+        "2026-06-24T00:00:02Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["artifacts", "run_abc"])
+
+    assert result.exit_code == 0
+    assert "Current stage: dispatch_tasks" in result.output
+    assert "Completed tasks: T001" in result.output
+    assert "00_goal.yaml" in result.output
+
+
 def test_cli_logs_lists_run_events(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
