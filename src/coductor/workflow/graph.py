@@ -95,6 +95,15 @@ def build_workflow_graph() -> StateGraph[WorkflowState]:
     return graph
 
 
+def compile_workflow_graph(
+    *,
+    graph: StateGraph[WorkflowState] | None = None,
+    checkpointer: Any | None = None,
+) -> Any:
+    workflow = graph or build_workflow_graph()
+    return workflow.compile(checkpointer=checkpointer)
+
+
 def _add_node(
     graph: StateGraph[WorkflowState],
     name: str,
