@@ -14,4 +14,4 @@ LangGraph 是 Workflow Runtime，节点保持薄，领域逻辑放在 Service。
 
 ## Consequences
 
-Phase 1 先由 `RunService` 执行同等节点顺序；后续把节点接入持久化 Checkpointer 时，不改变 Artifact 契约。
+Phase 1 由 `RunService` 发起同等节点顺序，`WorkflowGraphRunner` 统一调度阶段副作用并写入固定 Artifact/checkpoint；后续把 runner 语义接入持久化 Checkpointer 时，不改变 Artifact 契约。
