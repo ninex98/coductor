@@ -7,6 +7,7 @@ import pytest
 from coductor.workflow.langgraph_checkpoint import (
     LangGraphSqliteCheckpointUnavailable,
     create_langgraph_sqlite_saver,
+    is_langgraph_sqlite_saver_available,
     langgraph_thread_config,
 )
 
@@ -49,3 +50,13 @@ def test_create_langgraph_sqlite_saver_uses_available_dependency(monkeypatch) ->
 
     assert isinstance(saver, FakeSqliteSaver)
     assert calls == [connection]
+
+
+def test_real_langgraph_sqlite_saver_smoke_when_dependency_available() -> None:
+    if not is_langgraph_sqlite_saver_available():
+        pytest.skip("langgraph-checkpoint-sqlite is not installed in this environment")
+
+    connection = sqlite3.connect(":memory:")
+    saver = create_langgraph_sqlite_saver(connection)
+
+    assert saver is not None

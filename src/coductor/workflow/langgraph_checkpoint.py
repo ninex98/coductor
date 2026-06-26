@@ -20,6 +20,14 @@ def _load_sqlite_saver() -> Any:
     return SqliteSaver
 
 
+def is_langgraph_sqlite_saver_available() -> bool:
+    try:
+        _load_sqlite_saver()
+    except ModuleNotFoundError:
+        return False
+    return True
+
+
 def create_langgraph_sqlite_saver(connection: sqlite3.Connection) -> Any:
     try:
         sqlite_saver = _load_sqlite_saver()
