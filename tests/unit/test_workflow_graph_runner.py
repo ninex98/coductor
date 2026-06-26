@@ -7,6 +7,7 @@ from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ExecutionMode
 from coductor.services.task_execution_service import TaskExecutionService
+from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
@@ -88,3 +89,49 @@ def test_graph_runner_executes_plan_tasks_and_checkpoint(tmp_path: Path) -> None
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.artifacts["worker_result_T001"] == "tasks/T001/worker_result.yaml"
+
+
+def test_graph_runner_runs_integration_and_quality_gates(tmp_path: Path) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.quality_gates = []
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    _goal, _snapshot, _spec, plan, state = runner.run_front_half(
+        state,
+        requested_mode=ExecutionMode.SOLO,
+    )
+    verification = WorkflowVerificationService(tmp_path, config, writer)
+
+    state = runner.run_integration(
+        state,
+        plan=plan,
+        completed_task_ids=["T001"],
+        verification=verification,
+    )
+    gate_report, state = runner.run_quality_gates(state, verification=verification)
+
+    assert gate_report.data.required_gates_passed
+    assert state.current_stage == "run_quality_gates"
+    assert state.artifacts["04_integration"] == "04_integration.yaml"
+    assert state.artifacts["05_gate_report"] == "05_gate_report.yaml"
+    assert (run_dir / "04_integration.yaml").exists()
+    assert (run_dir / "05_gate_report.yaml").exists()
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["05_gate_report"] == "05_gate_report.yaml"
