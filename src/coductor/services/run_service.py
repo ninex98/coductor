@@ -38,12 +38,10 @@ from coductor.domain.enums import (
 )
 from coductor.domain.ids import new_id
 from coductor.domain.models import RunResult
-from coductor.gates.models import QualityGate
-from coductor.gates.runner import GateRunner
 from coductor.prompts.renderer import render_worker_prompt
-from coductor.repository.merge import build_integration_data
 from coductor.services.evidence_service import EvidenceService
 from coductor.services.task_execution_service import TaskExecutionService
+from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
@@ -75,6 +73,7 @@ class RunService:
         self.progress = progress
         self.artifacts = WorkflowArtifactWriter(root, config)
         self.task_execution = TaskExecutionService(root, config, self.backend, self.artifacts)
+        self.verification = WorkflowVerificationService(root, config, self.artifacts)
 
     def run(
         self,
@@ -169,7 +168,7 @@ class RunService:
         state.current_stage = "integrate_changes"
         self.save_checkpoint(state)
         self._event(run_id, "integrate_changes", "recording integration artifact")
-        self._write_integration(repo, run_id, plan, completed_task_ids)
+        self.verification.write_integration(repo, run_id, plan, completed_task_ids)
         state.artifacts["04_integration"] = "04_integration.yaml"
         state.current_stage = "run_quality_gates"
         self.save_checkpoint(state)
@@ -179,7 +178,7 @@ class RunService:
         last_fingerprint: str | None = None
         repeated_fingerprints = 0
         while True:
-            gate_report = self._run_gates(repo, run_id)
+            gate_report = self.verification.run_gates(repo, run_id)
             if gate_report.data.required_gates_passed:
                 break
             fingerprints = [
@@ -405,53 +404,6 @@ class RunService:
             on_dispatch=on_dispatch,
         )
         return [(item.task_id, item.handle) for item in executed]
-
-    def _write_integration(
-        self,
-        repo: ArtifactRepository,
-        run_id: str,
-        plan: ArtifactEnvelope[Any],
-        completed_task_ids: list[str],
-    ) -> None:
-        data = build_integration_data(plan.data.strategy, completed_task_ids)
-        envelope = self._envelope(
-            run_id=run_id,
-            artifact_type=ArtifactType.INTEGRATION,
-            artifact_id_prefix="art_integration",
-            status=(
-                ArtifactStatus.SKIPPED
-                if data.status == "skipped"
-                else ArtifactStatus.COMPLETE
-            ),
-            producer=Producer(kind=ProducerKind.SYSTEM, name="integration-manager"),
-            data=data,
-            inputs=[ArtifactInput.model_validate(repo.input_for("03_execution_plan.yaml", plan))],
-        )
-        repo.write("04_integration.yaml", envelope)
-
-    def _run_gates(self, repo: ArtifactRepository, run_id: str) -> ArtifactEnvelope[GateReportData]:
-        gates = [
-            QualityGate(
-                id=gate.id,
-                stage=gate.stage,
-                command=gate.command,
-                required=gate.required,
-                timeout_seconds=gate.timeout_seconds,
-            )
-            for gate in self.config.quality_gates
-        ]
-        data = GateRunner(self.root, run_dir=repo.root).run(gates)
-        status = ArtifactStatus.PASSED if data.required_gates_passed else ArtifactStatus.FAILED
-        envelope = self._envelope(
-            run_id=run_id,
-            artifact_type=ArtifactType.GATE_REPORT,
-            artifact_id_prefix="art_gates",
-            status=status,
-            producer=Producer(kind=ProducerKind.TOOL, name="gate-runner"),
-            data=data,
-        )
-        repo.write("05_gate_report.yaml", envelope)
-        return envelope
 
     def _repair(
         self,
