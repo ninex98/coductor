@@ -50,6 +50,34 @@ def _prepare_evidence_node(state: WorkflowState) -> NodePatch:
     return {"current_stage": "prepare_evidence", "status": status}
 
 
+def _run_quality_gates_node(state: WorkflowState) -> NodePatch:
+    return {"current_stage": "run_quality_gates"}
+
+
+def _repair_failure_node(state: WorkflowState) -> NodePatch:
+    return {
+        "current_stage": "repair_failure",
+        "repair_attempts": state.repair_attempts + 1,
+        "gate_passed": True,
+    }
+
+
+def _run_independent_review_node(state: WorkflowState) -> NodePatch:
+    return {"current_stage": "run_independent_review"}
+
+
+def _route_after_gates(state: WorkflowState) -> str:
+    if state.gate_passed:
+        return "run_independent_review"
+    if state.repair_attempts < state.max_repair_attempts:
+        return "repair_failure"
+    return "prepare_evidence"
+
+
+def _route_after_review(state: WorkflowState) -> str:
+    return "prepare_evidence" if state.review_passed else "repair_failure"
+
+
 def build_workflow_graph() -> StateGraph[WorkflowState]:
     graph = StateGraph(WorkflowState)
     _add_node(graph, "collect_goal", _stage_node("collect_goal"))
@@ -61,9 +89,9 @@ def build_workflow_graph() -> StateGraph[WorkflowState]:
     _add_node(graph, "materialize_tasks", _stage_node("materialize_tasks"))
     _add_node(graph, "dispatch_tasks", _stage_node("dispatch_tasks"))
     _add_node(graph, "integrate_changes", _stage_node("integrate_changes"))
-    _add_node(graph, "run_quality_gates", _stage_node("run_quality_gates"))
-    _add_node(graph, "repair_failure", _stage_node("repair_failure"))
-    _add_node(graph, "run_independent_review", _stage_node("run_independent_review"))
+    _add_node(graph, "run_quality_gates", _run_quality_gates_node)
+    _add_node(graph, "repair_failure", _repair_failure_node)
+    _add_node(graph, "run_independent_review", _run_independent_review_node)
     _add_node(graph, "prepare_evidence", _prepare_evidence_node)
 
     graph.add_edge(START, "collect_goal")
@@ -76,8 +104,9 @@ def build_workflow_graph() -> StateGraph[WorkflowState]:
     graph.add_edge("materialize_tasks", "dispatch_tasks")
     graph.add_edge("dispatch_tasks", "integrate_changes")
     graph.add_edge("integrate_changes", "run_quality_gates")
-    graph.add_edge("run_quality_gates", "run_independent_review")
-    graph.add_edge("run_independent_review", "prepare_evidence")
+    graph.add_conditional_edges("run_quality_gates", _route_after_gates)
+    graph.add_edge("repair_failure", "run_quality_gates")
+    graph.add_conditional_edges("run_independent_review", _route_after_review)
     graph.add_edge("prepare_evidence", END)
     return graph
 

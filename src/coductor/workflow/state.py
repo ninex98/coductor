@@ -21,3 +21,6 @@ class WorkflowState(BaseModel):
     artifacts: dict[str, str] = {}
     stale_artifacts: list[str] = []
     updated_at: str | None = None
+    gate_passed: bool = True
+    max_repair_attempts: int = 0
+    review_passed: bool = True
