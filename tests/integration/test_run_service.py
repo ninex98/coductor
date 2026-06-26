@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -140,6 +141,54 @@ def test_run_requires_human_when_worker_fails_even_without_gates(tmp_path: Path)
     run_dir = tmp_path / ".coductor" / "runs" / result.run_id
     assert (run_dir / "tasks" / "T001" / "worker_result.yaml").exists()
     assert not (run_dir / "07_evidence.yaml").exists()
+
+
+def test_run_service_langgraph_checkpointer_returns_none_when_dependency_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
+
+    def missing_saver(connection: sqlite3.Connection) -> object:
+        del connection
+        from coductor.workflow.langgraph_checkpoint import (
+            LangGraphSqliteCheckpointUnavailable,
+        )
+
+        raise LangGraphSqliteCheckpointUnavailable("missing")
+
+    monkeypatch.setattr(
+        "coductor.services.run_service.create_langgraph_sqlite_saver",
+        missing_saver,
+    )
+
+    assert service.langgraph_checkpointer() is None
+
+
+def test_run_service_langgraph_checkpointer_uses_coductor_database(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
+    received_paths: list[str] = []
+
+    class FakeSaver:
+        pass
+
+    def fake_saver(connection: sqlite3.Connection) -> FakeSaver:
+        row = connection.execute("pragma database_list").fetchone()
+        received_paths.append(row[2])
+        return FakeSaver()
+
+    monkeypatch.setattr(
+        "coductor.services.run_service.create_langgraph_sqlite_saver",
+        fake_saver,
+    )
+
+    saver = service.langgraph_checkpointer()
+
+    assert isinstance(saver, FakeSaver)
+    assert received_paths == [(tmp_path / ".coductor" / "coductor.sqlite3").as_posix()]
 
 
 def test_run_service_uses_workflow_graph_runner_for_front_half(

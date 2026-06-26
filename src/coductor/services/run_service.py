@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,10 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
+from coductor.workflow.langgraph_checkpoint import (
+    LangGraphSqliteCheckpointUnavailable,
+    create_langgraph_sqlite_saver,
+)
 from coductor.workflow.state import WorkflowState
 
 
@@ -257,6 +262,14 @@ class RunService:
 
     def save_checkpoint(self, state: WorkflowState) -> None:
         self.checkpoints.save(state, utc_now())
+
+    def langgraph_checkpointer(self) -> Any | None:
+        connection = sqlite3.connect(self.db.path)
+        try:
+            return create_langgraph_sqlite_saver(connection)
+        except LangGraphSqliteCheckpointUnavailable:
+            connection.close()
+            return None
 
     def resume(self, run_id: str) -> RunResult:
         state = self.checkpoints.load(run_id)
