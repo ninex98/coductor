@@ -4,10 +4,12 @@ import sys
 from pathlib import Path
 
 from coductor.artifacts.repository import ArtifactRepository
+from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig, QualityGateConfig
-from coductor.domain.enums import RunStatus
+from coductor.domain.enums import ExecutionMode, RunStatus
 from coductor.services.run_service import RunService
+from coductor.services.task_execution_service import TaskExecutionService
 from coductor.workflow.langgraph_checkpoint import langgraph_thread_config
 from coductor.workflow.state import WorkflowState
 
@@ -128,6 +130,81 @@ def test_resume_continues_from_checkpoint_stage_without_rewriting_goal(
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert (run_dir / "00_goal.yaml").read_text(encoding="utf-8") == original_goal
     assert (run_dir / "07_evidence.yaml").exists()
+
+
+class _RecordingBackend(FakeCodingBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started_worker_ids: list[str] = []
+
+    def start_worker(self, request: WorkerRequest) -> WorkerHandle:
+        self.started_worker_ids.append(request.worker_id)
+        return super().start_worker(request)
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        return super().continue_worker(handle, request)
+
+
+def test_resume_dispatch_stage_skips_completed_pipeline_tasks(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    backend = _RecordingBackend()
+    service = RunService(tmp_path, config, backend=backend)
+    run_id = "run_dispatch_resume_000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    goal = service.artifacts.write_goal(
+        repo,
+        run_id,
+        "先定义 JSON schema，再基于上游 contract 实现下游功能",
+        ExecutionMode.AUTO,
+    )
+    snapshot = service.artifacts.write_snapshot(repo, run_id, goal)
+    spec = service.artifacts.write_spec(repo, run_id, goal, snapshot)
+    plan = service.artifacts.write_plan(repo, run_id, spec, snapshot, ExecutionMode.AUTO)
+    task_service = TaskExecutionService(tmp_path, config, backend, service.artifacts)
+    first = task_service.execute_plan_task(
+        repo,
+        run_id,
+        plan,
+        plan.data.tasks[0],
+        {},
+        on_dispatch=lambda *_args: None,
+    )
+    first_result = run_dir / "tasks/T001/worker_result.yaml"
+    original_first_result = first_result.read_text(encoding="utf-8")
+    backend.started_worker_ids.clear()
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="dispatch_tasks",
+            raw_goal="先定义 JSON schema，再基于上游 contract 实现下游功能",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+            artifacts={
+                "00_goal": "00_goal.yaml",
+                "01_repository_snapshot": "01_repository_snapshot.yaml",
+                "02_spec": "02_spec.yaml",
+                "03_execution_plan": "03_execution_plan.yaml",
+                "task_T001": "tasks/T001/task.yaml",
+                "worker_result_T001": "tasks/T001/worker_result.yaml",
+            },
+            completed_task_ids=[first.task_id],
+        )
+    )
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert "worker_T001" not in backend.started_worker_ids
+    assert "worker_T002" in backend.started_worker_ids
+    assert first_result.read_text(encoding="utf-8") == original_first_result
+    assert (run_dir / "tasks/T002/worker_result.yaml").exists()
+    checkpoint = service.checkpoints.load(run_id)
+    assert checkpoint is not None
+    assert checkpoint.completed_task_ids == ["T001", "T002"]
 
 
 def test_resume_falls_back_to_legacy_checkpoint_when_langgraph_unavailable(

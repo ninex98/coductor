@@ -6,6 +6,7 @@ from typing import Any
 
 from coductor.artifacts.models import ArtifactEnvelope, ExecutionPlanData
 from coductor.contracts.models import ContractArtifact
+from coductor.contracts.repository import ContractRepository
 from coductor.domain.enums import ArtifactType, RunStatus
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
@@ -54,7 +55,13 @@ def dispatch_tasks_node(
             context.save(state)
 
         contracts: dict[str, ContractArtifact] = {}
+        contract_repository = ContractRepository(context.repo.root)
         for plan_task in context.task_execution.tasks_in_dependency_order(plan.data.tasks):
+            if plan_task.id in state.completed_task_ids:
+                for contract in contract_repository.load_manifest():
+                    if contract.producer_task_id == plan_task.id:
+                        contracts[contract.path] = contract
+                continue
             executed_task = context.task_execution.execute_plan_task(
                 context.repo,
                 state.run_id,
