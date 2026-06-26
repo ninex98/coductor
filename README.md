@@ -35,7 +35,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 
 LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后：`fake` 用于离线验证，`codex_sdk` 保持 SDK 边界，SDK 缺失且配置允许时自动 fallback 到 `codex_exec`。Backend 只提供执行摘要、命令记录和退出原因；`worker_result.yaml`、`review.yaml`、`gate_report.yaml`、`evidence.yaml` 等固定结构文件始终由 Coductor 写入，不能依赖外部 CLI 的 schema 模式。
 
-`resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式和阶段状态。恢复前会校验已有 Artifact 链路，检测到 hash 或 revision 不一致时进入 `human_required`，避免直接覆盖可疑证据。`WorkflowGraphRunner` 已负责当前垂直切片中各阶段副作用的统一调度、固定 Artifact 路径记录和 checkpoint 写入；领域逻辑仍保留在 artifact writer、task execution、verification、repair、review delivery 等服务中。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`，后续重点是接入 LangGraph 原生 SQLite saver。
+`resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式和阶段状态。恢复前会校验已有 Artifact 链路，检测到 hash 或 revision 不一致时进入 `human_required`，避免直接覆盖可疑证据。`WorkflowGraphRunner` 已负责当前垂直切片中各阶段副作用的统一调度、固定 Artifact 路径记录和 checkpoint 写入；领域逻辑仍保留在 artifact writer、task execution、verification、repair、review delivery 等服务中。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`，`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明。下一步是把 RunService 的恢复语义切到 LangGraph 原生 SQLite saver。
 
 ## 最短演示
 

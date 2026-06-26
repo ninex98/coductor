@@ -27,5 +27,7 @@ def test_docs_describe_graph_runner_as_current_orchestrator() -> None:
     docs = "\n".join([readme, workflow, architecture, adr])
 
     assert "WorkflowGraphRunner" in docs
+    assert "langgraph-checkpoint-sqlite" in docs
+    assert "compile_workflow_graph" in docs
     assert "真实阶段副作用仍由服务层执行" not in docs
     assert "后续会把各阶段副作用继续迁入薄节点" not in docs

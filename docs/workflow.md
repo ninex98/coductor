@@ -20,6 +20,6 @@ Coductor 的阶段术语固定如下：
 
 `resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数。恢复前会扫描 run 目录中的 Artifact 链路；若上游 hash、revision 或下游记录的 contract hash 不一致，流程进入 `human_required`，并在 checkpoint 中记录 `stale_artifacts`。链路有效时再继续可重放流程。
 
-`WorkflowGraphRunner` 已负责当前垂直切片中各阶段副作用的统一调度、固定 Artifact 路径记录和 checkpoint 写入。阶段节点仍保持薄，具体领域逻辑继续放在 artifact writer、task execution、verification、repair、review delivery 等服务中。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`；后续重点是把现有 runner/checkpoint 语义接入 LangGraph 原生 SQLite saver。
+`WorkflowGraphRunner` 已负责当前垂直切片中各阶段副作用的统一调度、固定 Artifact 路径记录和 checkpoint 写入。阶段节点仍保持薄，具体领域逻辑继续放在 artifact writer、task execution、verification、repair、review delivery 等服务中。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`，`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；后续重点是把现有 runner/checkpoint 语义切到 LangGraph 原生 SQLite saver。
 
 Evidence delivery 是最终状态来源。即使独立 review 有 blocking finding，系统也会写入 `06_review.yaml`、`07_evidence.yaml` 和 `delivery-report.md`；此时 evidence 的 `final_status` 与 Artifact envelope status 都必须是 `human_required`。
