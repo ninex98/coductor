@@ -22,6 +22,8 @@ Coductor 的阶段术语固定如下：
 
 CLI 可观测性分三层：`coductor status [RUN_ID]` 查看运行总览，`coductor status RUN_ID --json` 输出包含 run 表记录和 checkpoint 摘要的机器可读 JSON；`coductor logs RUN_ID --stage dispatch_tasks --tail 20 --json` 可按阶段过滤、截取最近事件并输出机器可读日志；`coductor explain RUN_ID` 读取 SQLite checkpoint 并显示 `current_stage`、`completed_task_ids`、`last_error` 和 `stale_artifacts`；`coductor artifacts RUN_ID` 在列出 YAML Artifact 前也会显示同一份 checkpoint 摘要，方便把固定文件产物和当前运行状态对齐。
 
+控制命令不是任意状态覆盖：`pause` 和 `stop` 只接受 `running`；`approve` 只接受 `human_required`；`verify` 和 `review` 只接受 `ready_for_human_review` 或 `human_required`。非法状态会返回可恢复错误，并保持原 run 状态不变。
+
 `RunService` 构建 contextual LangGraph 作为当前主编排器。阶段节点仍保持薄，具体领域逻辑继续放在 artifact writer、task execution、verification、repair、review delivery 等服务中；节点负责读取上游 Artifact、调用服务、记录固定 Artifact 路径和 checkpoint。`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；后续重点是清理 Graph checkpoint 连接生命周期和更细粒度的节点级幂等恢复。
 
 Evidence delivery 是最终状态来源。即使独立 review 有 blocking finding，系统也会写入 `06_review.yaml`、`07_evidence.yaml` 和 `delivery-report.md`；此时 evidence 的 `final_status` 与 Artifact envelope status 都必须是 `human_required`。
