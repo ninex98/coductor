@@ -25,8 +25,15 @@ from coductor.backends.base import CodingBackend, WorkerHandle, WorkerRequest
 from coductor.config.models import CoductorConfig
 from coductor.contracts.models import ContractArtifact
 from coductor.contracts.repository import ContractRepository
-from coductor.domain.enums import ArtifactStatus, ArtifactType, ProducerKind, SandboxMode
+from coductor.domain.enums import (
+    ArtifactStatus,
+    ArtifactType,
+    ExecutionStrategy,
+    ProducerKind,
+    SandboxMode,
+)
 from coductor.prompts.renderer import render_worker_prompt
+from coductor.repository.worktree import WorktreeManager
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
 
@@ -55,6 +62,7 @@ class TaskExecutionService:
         self.config = config
         self.backend = backend
         self.artifacts = artifacts
+        self.worktrees = WorktreeManager(root)
 
     def execute_plan_tasks(
         self,
@@ -95,7 +103,13 @@ class TaskExecutionService:
             if path in plan_task.consumes
         ]
         task = self.write_task(repo, run_id, plan, plan_task, task_contracts)
-        worker_handle = self.dispatch_builder(repo, run_id, task)
+        worker_handle = self.dispatch_builder(
+            repo,
+            run_id,
+            task,
+            strategy=plan.data.strategy,
+            base_commit=plan.data.base_commit,
+        )
         on_dispatch(plan_task.id, worker_handle)
         return ExecutedTask(
             plan_task.id,
@@ -194,15 +208,21 @@ class TaskExecutionService:
         repo: ArtifactRepository,
         run_id: str,
         task: ArtifactEnvelope[TaskData],
+        *,
+        strategy: ExecutionStrategy,
+        base_commit: str,
     ) -> WorkerHandle:
         task_id = task.data.task_id
         task_path = f"tasks/{task_id}/task.yaml"
+        workspace = self._worker_workspace(run_id, task_id, strategy, base_commit)
         request_data = WorkerRequestData(
             worker_id=f"worker_{task_id}",
             backend=self.config.backend.provider,
             role="builder",
             sandbox=SandboxMode.WORKSPACE_WRITE,
-            workspace_path=".",
+            workspace_path=workspace.relative_to(self.root).as_posix()
+            if workspace.is_relative_to(self.root)
+            else workspace.as_posix(),
             prompt_template="builder",
             context_artifacts=task.data.global_context
             + task.data.upstream_artifacts
@@ -220,25 +240,35 @@ class TaskExecutionService:
             inputs=[ArtifactInput.model_validate(repo.input_for(task_path, task))],
         )
         repo.write(f"tasks/{task_id}/worker_request.yaml", request_envelope)
-        prompt = render_worker_prompt(
-            "builder",
-            request_data.context_artifacts,
-            task.data.objective,
-        )
-        before_snapshot = self.workspace_snapshot()
-        request = WorkerRequest(
-            worker_id=request_data.worker_id,
-            role="builder",
-            prompt=prompt,
-            workspace_path=self.root.as_posix(),
-            sandbox=SandboxMode.WORKSPACE_WRITE,
-            timeout_seconds=request_data.timeout_seconds,
-        )
-        handle = self.backend.start_worker(request)
-        result = self.backend.continue_worker(handle, request)
-        patch = self.ensure_patch(repo.root, task_id, before_snapshot=before_snapshot)
-        protected_issues = self.protected_path_issues(result.files_changed, patch)
-        exit_reason = "failed" if protected_issues else result.exit_reason
+        try:
+            prompt = render_worker_prompt(
+                "builder",
+                request_data.context_artifacts,
+                task.data.objective,
+            )
+            before_snapshot = self.workspace_snapshot(workspace)
+            request = WorkerRequest(
+                worker_id=request_data.worker_id,
+                role="builder",
+                prompt=prompt,
+                workspace_path=workspace.as_posix(),
+                sandbox=SandboxMode.WORKSPACE_WRITE,
+                timeout_seconds=request_data.timeout_seconds,
+            )
+            handle = self.backend.start_worker(request)
+            result = self.backend.continue_worker(handle, request)
+            patch = self.ensure_patch(
+                repo.root,
+                task_id,
+                workspace=workspace,
+                before_snapshot=before_snapshot,
+            )
+            apply_issues = self._apply_parallel_patch(strategy, patch)
+            protected_issues = self.protected_path_issues(result.files_changed, patch)
+            exit_reason = "failed" if protected_issues or apply_issues else result.exit_reason
+            unresolved_issues = result.unresolved_issues + apply_issues + protected_issues
+        finally:
+            self._cleanup_worker_workspace(run_id, task_id, strategy)
         result_data = WorkerResultData(
             worker_id=result.worker_id,
             thread_id=result.thread_id,
@@ -254,7 +284,7 @@ class TaskExecutionService:
                 sha256=file_sha256(patch),
                 bytes=patch.stat().st_size,
             ),
-            unresolved_issues=result.unresolved_issues + protected_issues,
+            unresolved_issues=unresolved_issues,
             exit_reason=exit_reason,
         )
         result_envelope = self.artifacts.envelope(
@@ -273,30 +303,71 @@ class TaskExecutionService:
         repo.write(f"tasks/{task_id}/worker_result.yaml", result_envelope)
         return handle
 
+    def _worker_workspace(
+        self,
+        run_id: str,
+        task_id: str,
+        strategy: ExecutionStrategy,
+        base_commit: str,
+    ) -> Path:
+        if str(strategy) != ExecutionStrategy.PARALLEL or not self.worktrees.is_available():
+            return self.root
+        return self.worktrees.create(run_id, task_id, base_commit)
+
+    def _cleanup_worker_workspace(
+        self,
+        run_id: str,
+        task_id: str,
+        strategy: ExecutionStrategy,
+    ) -> None:
+        if str(strategy) != ExecutionStrategy.PARALLEL or not self.worktrees.is_available():
+            return
+        self.worktrees.remove(run_id, task_id)
+
+    def _apply_parallel_patch(
+        self,
+        strategy: ExecutionStrategy,
+        patch: Path,
+    ) -> list[str]:
+        if (
+            str(strategy) != ExecutionStrategy.PARALLEL
+            or not self.worktrees.is_available()
+            or not _patch_has_changes(patch)
+        ):
+            return []
+        result = self.worktrees.apply(patch)
+        if result.returncode == 0:
+            return []
+        message = result.stderr.strip() or result.stdout.strip() or "git apply failed"
+        return [f"parallel patch apply failed: {message}"]
+
     def ensure_patch(
         self,
         run_dir: Path,
         task_id: str,
         *,
+        workspace: Path | None = None,
         before_snapshot: dict[str, str] | None = None,
     ) -> Path:
         patch = run_dir / f"tasks/{task_id}/patch.diff"
         patch.parent.mkdir(parents=True, exist_ok=True)
-        diff = self.workspace_diff()
+        workspace = workspace or self.root
+        diff = self.workspace_diff(workspace)
         if not diff.strip() and before_snapshot is not None:
-            diff = self.snapshot_diff(before_snapshot, self.workspace_snapshot())
+            diff = self.snapshot_diff(before_snapshot, self.workspace_snapshot(workspace))
         if diff.strip():
             patch.write_text(diff, encoding="utf-8")
         else:
             patch.write_text("# coductor no workspace diff captured\n", encoding="utf-8")
         return patch
 
-    def workspace_snapshot(self) -> dict[str, str]:
+    def workspace_snapshot(self, workspace: Path | None = None) -> dict[str, str]:
+        workspace = workspace or self.root
         snapshot: dict[str, str] = {}
-        for path in sorted(self.root.rglob("*")):
+        for path in sorted(workspace.rglob("*")):
             if not path.is_file():
                 continue
-            relative = path.relative_to(self.root).as_posix()
+            relative = path.relative_to(workspace).as_posix()
             if self._is_tool_path(relative):
                 continue
             try:
@@ -336,10 +407,11 @@ class TaskExecutionService:
                 chunks.append(f"diff --git a/{relative} b/{relative}\n{unified}")
         return "\n".join(chunks)
 
-    def workspace_diff(self) -> str:
+    def workspace_diff(self, workspace: Path | None = None) -> str:
+        workspace = workspace or self.root
         tracked = subprocess.run(
             ["git", "diff", "--binary"],
-            cwd=self.root,
+            cwd=workspace,
             capture_output=True,
             text=True,
             check=False,
@@ -347,13 +419,13 @@ class TaskExecutionService:
         if tracked.returncode != 0:
             return ""
         chunks = [tracked.stdout]
-        chunks.extend(self._untracked_file_diffs())
+        chunks.extend(self._untracked_file_diffs(workspace))
         return "\n".join(chunk for chunk in chunks if chunk)
 
-    def _untracked_file_diffs(self) -> list[str]:
+    def _untracked_file_diffs(self, workspace: Path) -> list[str]:
         listed = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
-            cwd=self.root,
+            cwd=workspace,
             capture_output=True,
             text=True,
             check=False,
@@ -364,12 +436,12 @@ class TaskExecutionService:
         for relative in sorted(line for line in listed.stdout.splitlines() if line.strip()):
             if self._is_tool_path(relative):
                 continue
-            path = self.root / relative
+            path = workspace / relative
             if not path.is_file():
                 continue
             diff = subprocess.run(
                 ["git", "diff", "--binary", "--no-index", "--", "/dev/null", relative],
-                cwd=self.root,
+                cwd=workspace,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -417,3 +489,13 @@ class TaskExecutionService:
             or fnmatch.fnmatch("/" + relative_path, pattern)
             for pattern in self.config.permissions.protected_paths
         )
+
+
+def _patch_has_changes(path: Path) -> bool:
+    content = path.read_text(encoding="utf-8", errors="replace")
+    return (
+        "diff --git " in content
+        or "\n--- " in content
+        or content.startswith("--- ")
+        or "GIT binary patch" in content
+    )

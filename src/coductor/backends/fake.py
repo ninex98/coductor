@@ -32,7 +32,7 @@ class FakeCodingBackend:
             self.repair_side_effect()
         files_changed: list[str] = []
         if request.role in {"builder", "repairer"}:
-            output = Path(request.workspace_path) / "coductor_fake_output.txt"
+            output = Path(request.workspace_path) / f"coductor_fake_output_{request.worker_id}.txt"
             output.write_text(
                 f"{request.role} {request.worker_id} completed in {handle.thread_id}\n",
                 encoding="utf-8",
