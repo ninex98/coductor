@@ -29,6 +29,8 @@ class EvidenceCompletenessValidator:
             errors.append("blocking review findings exist")
         if not any(item.type == "patch" for item in evidence.evidence_files):
             errors.append("missing patch evidence")
+        if any(item.type == "invalid_patch" for item in evidence.evidence_files):
+            errors.append("patch evidence has no changes")
         return EvidenceValidation(valid=not errors, errors=errors)
 
 
@@ -51,9 +53,10 @@ class EvidenceService:
             patch_path = run_dir / f"tasks/{task_id}/patch.diff"
             if not patch_path.exists():
                 continue
+            patch_type = "patch" if _patch_has_changes(patch_path) else "invalid_patch"
             evidence_files.append(
                 EvidenceFile(
-                    type="patch",
+                    type=patch_type,
                     path=f"tasks/{task_id}/patch.diff",
                     sha256=file_sha256(patch_path),
                 )
@@ -126,3 +129,13 @@ class EvidenceService:
             lines.extend(f"- {error}" for error in evidence.validation.errors)
         report.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return report
+
+
+def _patch_has_changes(path: Path) -> bool:
+    content = path.read_text(encoding="utf-8", errors="replace")
+    return (
+        "diff --git " in content
+        or "\n--- " in content
+        or content.startswith("--- ")
+        or "GIT binary patch" in content
+    )
