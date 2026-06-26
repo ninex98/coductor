@@ -160,7 +160,7 @@ def test_run_service_langgraph_checkpointer_returns_none_when_dependency_missing
         raise LangGraphSqliteCheckpointUnavailable("missing")
 
     monkeypatch.setattr(
-        "coductor.services.run_service.create_langgraph_sqlite_saver",
+        "coductor.workflow.langgraph_checkpoint.create_langgraph_sqlite_saver",
         missing_saver,
     )
 
@@ -183,7 +183,7 @@ def test_run_service_langgraph_checkpointer_uses_coductor_database(
         return FakeSaver()
 
     monkeypatch.setattr(
-        "coductor.services.run_service.create_langgraph_sqlite_saver",
+        "coductor.workflow.langgraph_checkpoint.create_langgraph_sqlite_saver",
         fake_saver,
     )
 
@@ -201,14 +201,14 @@ def test_run_service_compile_langgraph_uses_optional_checkpointer(
     checkpointer = object()
     received: list[object | None] = []
 
-    monkeypatch.setattr(service, "langgraph_checkpointer", lambda: checkpointer)
+    monkeypatch.setattr(service.langgraph_checkpoints, "checkpointer", lambda: checkpointer)
 
     def fake_compile_workflow_graph(*, checkpointer=None):
         received.append(checkpointer)
         return "compiled"
 
     monkeypatch.setattr(
-        "coductor.services.run_service.compile_workflow_graph",
+        "coductor.workflow.langgraph_checkpoint.compile_workflow_graph",
         fake_compile_workflow_graph,
     )
 
@@ -223,14 +223,14 @@ def test_run_service_compile_langgraph_allows_missing_checkpointer(
     service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
     received: list[object | None] = []
 
-    monkeypatch.setattr(service, "langgraph_checkpointer", lambda: None)
+    monkeypatch.setattr(service.langgraph_checkpoints, "checkpointer", lambda: None)
 
     def fake_compile_workflow_graph(*, checkpointer=None):
         received.append(checkpointer)
         return "compiled"
 
     monkeypatch.setattr(
-        "coductor.services.run_service.compile_workflow_graph",
+        "coductor.workflow.langgraph_checkpoint.compile_workflow_graph",
         fake_compile_workflow_graph,
     )
 

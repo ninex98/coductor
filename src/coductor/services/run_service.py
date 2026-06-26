@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -38,13 +37,8 @@ from coductor.services.workflow_verification_service import WorkflowVerification
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
-from coductor.workflow.graph import compile_workflow_graph
 from coductor.workflow.graph_runner import WorkflowGraphRunner
-from coductor.workflow.langgraph_checkpoint import (
-    LangGraphSqliteCheckpointUnavailable,
-    create_langgraph_sqlite_saver,
-    langgraph_thread_config,
-)
+from coductor.workflow.langgraph_checkpoint import LangGraphCheckpointStore
 from coductor.workflow.state import WorkflowState
 
 
@@ -69,6 +63,7 @@ class RunService:
         self.runs_dir = self.coductor_dir / "runs"
         self.db = Database(self.coductor_dir / "coductor.sqlite3")
         self.checkpoints = WorkflowCheckpointStore(self.db, self.runs_dir)
+        self.langgraph_checkpoints = LangGraphCheckpointStore(self.db.path)
         self.backend = backend or self._backend_from_config()
         self.progress = progress
         self.artifacts = WorkflowArtifactWriter(root, config)
@@ -264,34 +259,13 @@ class RunService:
 
     def save_checkpoint(self, state: WorkflowState) -> None:
         self.checkpoints.save(state, utc_now())
-        self._save_langgraph_checkpoint(state)
-
-    def _save_langgraph_checkpoint(self, state: WorkflowState) -> None:
-        connection = sqlite3.connect(self.db.path)
-        try:
-            saver = create_langgraph_sqlite_saver(connection)
-        except LangGraphSqliteCheckpointUnavailable:
-            connection.close()
-            return
-        try:
-            graph = compile_workflow_graph(checkpointer=saver)
-            graph.update_state(
-                langgraph_thread_config(state.run_id),
-                state.model_dump(mode="json"),
-            )
-        finally:
-            connection.close()
+        self.langgraph_checkpoints.save(state)
 
     def langgraph_checkpointer(self) -> Any | None:
-        connection = sqlite3.connect(self.db.path)
-        try:
-            return create_langgraph_sqlite_saver(connection)
-        except LangGraphSqliteCheckpointUnavailable:
-            connection.close()
-            return None
+        return self.langgraph_checkpoints.checkpointer()
 
     def compile_langgraph(self) -> Any:
-        return compile_workflow_graph(checkpointer=self.langgraph_checkpointer())
+        return self.langgraph_checkpoints.compile_graph()
 
     def resume(self, run_id: str) -> RunResult:
         state = self._load_resume_state(run_id)
@@ -329,13 +303,7 @@ class RunService:
         return state or self.checkpoints.load(run_id)
 
     def _load_langgraph_checkpoint(self, run_id: str) -> WorkflowState | None:
-        graph = self.compile_langgraph()
-        if graph is None:
-            return None
-        snapshot = graph.get_state(langgraph_thread_config(run_id))
-        if not snapshot.values:
-            return None
-        return WorkflowState.model_validate(snapshot.values)
+        return self.langgraph_checkpoints.load(run_id)
 
     def _validate_resume_artifacts(self, repo: ArtifactRepository) -> list[str]:
         validator = ArtifactLineageValidator(repo)
