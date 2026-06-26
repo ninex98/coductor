@@ -46,7 +46,7 @@ class CodexExecBackend:
                 cwd=request.workspace_path,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout_seconds,
+                timeout=request.timeout_seconds,
                 check=False,
             )
         except FileNotFoundError as exc:

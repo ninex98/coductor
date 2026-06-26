@@ -61,6 +61,42 @@ def test_codex_exec_reports_missing_cli(tmp_path: Path) -> None:
         )
 
 
+def test_codex_exec_uses_request_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
+
+    received: dict[str, int] = {}
+
+    def fake_run(*args, **kwargs):
+        del args
+        received["timeout"] = kwargs["timeout"]
+
+        class Completed:
+            stdout = "ok"
+            stderr = ""
+            returncode = 0
+
+        return Completed()
+
+    monkeypatch.setattr("coductor.backends.codex_exec.subprocess.run", fake_run)
+    backend = CodexExecBackend(codex_bin="codex", schemas_dir=tmp_path)
+    request = WorkerRequest(
+        worker_id="worker_T001",
+        role="builder",
+        prompt="hello",
+        workspace_path=tmp_path.as_posix(),
+        sandbox=SandboxMode.WORKSPACE_WRITE,
+        timeout_seconds=120,
+    )
+
+    result = backend.continue_worker(
+        WorkerHandle(worker_id="worker_T001", thread_id="thread_1"),
+        request,
+    )
+
+    assert isinstance(result, WorkerResult)
+    assert received["timeout"] == 120
+
+
 def _request(tmp_path: Path):
     from coductor.backends.base import WorkerRequest
 

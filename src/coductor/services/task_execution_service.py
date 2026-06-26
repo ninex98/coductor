@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
+import fnmatch
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -205,6 +208,7 @@ class TaskExecutionService:
             + task.data.upstream_artifacts
             + [task_path],
             output_schema="worker_result",
+            timeout_seconds=self.config.budgets.max_run_minutes * 60,
         )
         request_envelope = self.artifacts.envelope(
             run_id=run_id,
@@ -221,16 +225,20 @@ class TaskExecutionService:
             request_data.context_artifacts,
             task.data.objective,
         )
+        before_snapshot = self.workspace_snapshot()
         request = WorkerRequest(
             worker_id=request_data.worker_id,
             role="builder",
             prompt=prompt,
             workspace_path=self.root.as_posix(),
             sandbox=SandboxMode.WORKSPACE_WRITE,
+            timeout_seconds=request_data.timeout_seconds,
         )
         handle = self.backend.start_worker(request)
         result = self.backend.continue_worker(handle, request)
-        patch = self.ensure_patch(repo.root, task_id)
+        patch = self.ensure_patch(repo.root, task_id, before_snapshot=before_snapshot)
+        protected_issues = self.protected_path_issues(result.files_changed, patch)
+        exit_reason = "failed" if protected_issues else result.exit_reason
         result_data = WorkerResultData(
             worker_id=result.worker_id,
             thread_id=result.thread_id,
@@ -246,8 +254,8 @@ class TaskExecutionService:
                 sha256=file_sha256(patch),
                 bytes=patch.stat().st_size,
             ),
-            unresolved_issues=result.unresolved_issues,
-            exit_reason=result.exit_reason,
+            unresolved_issues=result.unresolved_issues + protected_issues,
+            exit_reason=exit_reason,
         )
         result_envelope = self.artifacts.envelope(
             run_id=run_id,
@@ -265,9 +273,147 @@ class TaskExecutionService:
         repo.write(f"tasks/{task_id}/worker_result.yaml", result_envelope)
         return handle
 
-    def ensure_patch(self, run_dir: Path, task_id: str) -> Path:
+    def ensure_patch(
+        self,
+        run_dir: Path,
+        task_id: str,
+        *,
+        before_snapshot: dict[str, str] | None = None,
+    ) -> Path:
         patch = run_dir / f"tasks/{task_id}/patch.diff"
         patch.parent.mkdir(parents=True, exist_ok=True)
-        if not patch.exists():
-            patch.write_text("# fake backend did not produce a patch\n", encoding="utf-8")
+        diff = self.workspace_diff()
+        if not diff.strip() and before_snapshot is not None:
+            diff = self.snapshot_diff(before_snapshot, self.workspace_snapshot())
+        if diff.strip():
+            patch.write_text(diff, encoding="utf-8")
+        else:
+            patch.write_text("# coductor no workspace diff captured\n", encoding="utf-8")
         return patch
+
+    def workspace_snapshot(self) -> dict[str, str]:
+        snapshot: dict[str, str] = {}
+        for path in sorted(self.root.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(self.root).as_posix()
+            if self._is_tool_path(relative):
+                continue
+            try:
+                snapshot[relative] = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                snapshot[relative] = "<binary>"
+        return snapshot
+
+    def snapshot_diff(self, before: dict[str, str], after: dict[str, str]) -> str:
+        chunks: list[str] = []
+        for relative in sorted(set(before) | set(after)):
+            before_text = before.get(relative)
+            after_text = after.get(relative)
+            if before_text == after_text:
+                continue
+            if before_text == "<binary>" or after_text == "<binary>":
+                chunks.append(
+                    "\n".join(
+                        [
+                            f"diff --git a/{relative} b/{relative}",
+                            "Binary files differ",
+                            "",
+                        ]
+                    )
+                )
+                continue
+            before_lines = [] if before_text is None else before_text.splitlines(keepends=True)
+            after_lines = [] if after_text is None else after_text.splitlines(keepends=True)
+            diff_lines = difflib.unified_diff(
+                before_lines,
+                after_lines,
+                fromfile=f"a/{relative}",
+                tofile=f"b/{relative}",
+            )
+            unified = "".join(diff_lines)
+            if unified:
+                chunks.append(f"diff --git a/{relative} b/{relative}\n{unified}")
+        return "\n".join(chunks)
+
+    def workspace_diff(self) -> str:
+        tracked = subprocess.run(
+            ["git", "diff", "--binary"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if tracked.returncode != 0:
+            return ""
+        chunks = [tracked.stdout]
+        chunks.extend(self._untracked_file_diffs())
+        return "\n".join(chunk for chunk in chunks if chunk)
+
+    def _untracked_file_diffs(self) -> list[str]:
+        listed = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if listed.returncode != 0:
+            return []
+        diffs: list[str] = []
+        for relative in sorted(line for line in listed.stdout.splitlines() if line.strip()):
+            if self._is_tool_path(relative):
+                continue
+            path = self.root / relative
+            if not path.is_file():
+                continue
+            diff = subprocess.run(
+                ["git", "diff", "--binary", "--no-index", "--", "/dev/null", relative],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            output = diff.stdout.strip()
+            if output:
+                diffs.append(output + "\n")
+        return diffs
+
+    def _is_tool_path(self, relative_path: str) -> bool:
+        ignored_prefixes = (
+            ".coductor/",
+            ".git/",
+            ".venv/",
+            "node_modules/",
+            "vendor/",
+            "__pycache__/",
+        )
+        return relative_path.startswith(ignored_prefixes)
+
+    def protected_path_issues(self, files_changed: list[str], patch: Path) -> list[str]:
+        changed = set(files_changed)
+        changed.update(self._paths_from_patch(patch))
+        issues: list[str] = []
+        for path in sorted(changed):
+            if self._is_protected_path(path):
+                issues.append(f"protected path changed: {path}")
+        return issues
+
+    def _paths_from_patch(self, patch: Path) -> set[str]:
+        paths: set[str] = set()
+        if not patch.exists():
+            return paths
+        for line in patch.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.startswith("diff --git "):
+                continue
+            parts = line.split()
+            if len(parts) >= 4:
+                paths.add(parts[3].removeprefix("b/"))
+        return paths
+
+    def _is_protected_path(self, relative_path: str) -> bool:
+        return any(
+            fnmatch.fnmatch(relative_path, pattern)
+            or fnmatch.fnmatch("/" + relative_path, pattern)
+            for pattern in self.config.permissions.protected_paths
+        )

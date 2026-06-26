@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.domain.enums import WorkerStatus
@@ -29,12 +30,20 @@ class FakeCodingBackend:
     def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
         if request.role == "repairer" and self.repair_side_effect is not None:
             self.repair_side_effect()
+        files_changed: list[str] = []
+        if request.role in {"builder", "repairer"}:
+            output = Path(request.workspace_path) / "coductor_fake_output.txt"
+            output.write_text(
+                f"{request.role} {request.worker_id} completed in {handle.thread_id}\n",
+                encoding="utf-8",
+            )
+            files_changed.append(output.relative_to(request.workspace_path).as_posix())
         return WorkerResult(
             worker_id=request.worker_id,
             thread_id=handle.thread_id,
             summary=f"Fake backend completed {request.role} for {request.worker_id}",
             files_read=["00_goal.yaml", "02_spec.yaml"],
-            files_changed=[],
+            files_changed=files_changed,
             commands_run=[],
             tests_claimed=[],
             generated_artifacts=[],

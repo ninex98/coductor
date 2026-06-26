@@ -19,6 +19,7 @@ class WorkerRequest(BaseModel):
     sandbox: SandboxMode
     thread_policy: str = "new"
     existing_thread_id: str | None = None
+    timeout_seconds: int = 1800
 
 
 class WorkerHandle(BaseModel):
