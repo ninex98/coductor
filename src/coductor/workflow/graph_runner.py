@@ -22,7 +22,7 @@ from coductor.services.task_execution_service import ExecutedTask, TaskExecution
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
-from coductor.workflow.nodes import inspect, intake
+from coductor.workflow.nodes import inspect, intake, specify
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -75,10 +75,15 @@ class WorkflowGraphRunner:
             ).model_dump(mode="json")
         )
 
-        spec = self.artifacts.write_spec(self.repo, state.run_id, goal, snapshot)
-        state.artifacts["02_spec"] = "02_spec.yaml"
-        state.current_stage = "create_execution_plan"
-        self._save(state)
+        specify.draft_spec_node(
+            state,
+            context=context,
+            goal=goal,
+            snapshot=snapshot,
+        )
+        spec = ArtifactEnvelope[SpecificationData].model_validate(
+            self.repo.read("02_spec.yaml", ArtifactType.SPECIFICATION).model_dump(mode="json")
+        )
 
         plan = self.artifacts.write_plan(
             self.repo,

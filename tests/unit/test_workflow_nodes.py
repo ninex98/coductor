@@ -142,3 +142,34 @@ def test_inspect_repository_node_writes_snapshot_when_runtime_context_is_present
     assert saved is not None
     assert saved.artifacts["01_repository_snapshot"] == "01_repository_snapshot.yaml"
     assert saved.current_stage == "draft_spec"
+
+
+def test_draft_spec_node_writes_spec_when_runtime_context_is_present(tmp_path) -> None:
+    run_id = "run_spec_node_000000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, CoductorConfig.default())
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    goal = writer.write_goal(repo, run_id, "修复示例函数", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, run_id, goal)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = draft_spec_node(state, context=context, goal=goal, snapshot=snapshot)
+
+    assert patch == {
+        "current_stage": "create_execution_plan",
+        "artifacts": {"02_spec": "02_spec.yaml"},
+    }
+    assert repo.read("02_spec.yaml", ArtifactType.SPECIFICATION)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["02_spec"] == "02_spec.yaml"
+    assert saved.current_stage == "create_execution_plan"
