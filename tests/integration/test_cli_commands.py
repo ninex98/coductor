@@ -407,7 +407,7 @@ def test_cli_missing_run_failure_includes_recovery_context(
 @pytest.mark.parametrize(
     ("command", "initial_status", "status"),
     [
-        ("approve", "ready_for_human_review", "approved"),
+        ("approve", "human_required", "approved"),
         ("pause", "running", "paused"),
         ("stop", "running", "stopped"),
         ("verify", "ready_for_human_review", "verification_requested"),
@@ -451,6 +451,24 @@ def test_cli_pause_rejects_completed_run_without_changing_status(
 
     assert result.exit_code == 1
     assert "cannot pause run in status ready_for_human_review" in result.output
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    row = db.get_run("run_abc")
+    assert row is not None
+    assert row["status"] == "ready_for_human_review"
+
+
+def test_cli_approve_rejects_ready_run_without_changing_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["approve", "run_abc"])
+
+    assert result.exit_code == 1
+    assert "cannot approve run in status ready_for_human_review" in result.output
     db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
     row = db.get_run("run_abc")
     assert row is not None
