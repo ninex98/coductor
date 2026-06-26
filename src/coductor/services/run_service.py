@@ -168,17 +168,27 @@ class RunService:
         state.current_stage = "integrate_changes"
         self.save_checkpoint(state)
         self._event(run_id, "integrate_changes", "recording integration artifact")
-        self.verification.write_integration(repo, run_id, plan, completed_task_ids)
-        state.artifacts["04_integration"] = "04_integration.yaml"
-        state.current_stage = "run_quality_gates"
-        self.save_checkpoint(state)
+        runner = WorkflowGraphRunner(
+            repo=repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+        )
+        state = runner.run_integration(
+            state,
+            plan=plan,
+            completed_task_ids=completed_task_ids,
+            verification=self.verification,
+        )
         self._event(run_id, "run_quality_gates", "running configured quality gates")
 
         gate_report: ArtifactEnvelope[GateReportData] | None = None
         last_fingerprint: str | None = None
         repeated_fingerprints = 0
         while True:
-            gate_report = self.verification.run_gates(repo, run_id)
+            gate_report, state = runner.run_quality_gates(
+                state,
+                verification=self.verification,
+            )
             if gate_report.data.required_gates_passed:
                 break
             fingerprints = [

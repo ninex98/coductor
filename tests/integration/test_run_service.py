@@ -159,3 +159,44 @@ def test_run_service_reports_dispatch_progress_from_task_runner(tmp_path: Path) 
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert ("dispatch_tasks", "dispatch T001") in events
+
+
+def test_run_service_uses_workflow_graph_runner_for_verification(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    calls: list[str] = []
+    original_integration = WorkflowGraphRunner.run_integration
+    original_gates = WorkflowGraphRunner.run_quality_gates
+
+    def recording_run_integration(
+        self,
+        state,
+        *,
+        plan,
+        completed_task_ids,
+        verification,
+    ):
+        calls.append("integration")
+        return original_integration(
+            self,
+            state,
+            plan=plan,
+            completed_task_ids=completed_task_ids,
+            verification=verification,
+        )
+
+    def recording_run_quality_gates(self, state, *, verification):
+        calls.append("gates")
+        return original_gates(self, state, verification=verification)
+
+    monkeypatch.setattr(WorkflowGraphRunner, "run_integration", recording_run_integration)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_quality_gates", recording_run_quality_gates)
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert calls == ["integration", "gates"]
