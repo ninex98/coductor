@@ -19,13 +19,14 @@ from coductor.artifacts.models import (
 )
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle
-from coductor.domain.enums import ArtifactType, ExecutionMode, RunStatus
+from coductor.domain.enums import ArtifactType, ExecutionMode
 from coductor.services.repair_service import RepairService
 from coductor.services.task_execution_service import ExecutedTask, TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.nodes import (
+    deliver,
     execute,
     inspect,
     intake,
@@ -263,15 +264,20 @@ class WorkflowGraphRunner:
         *,
         evidence: Callable[[], ArtifactEnvelope[EvidenceBundleData]],
     ) -> tuple[ArtifactEnvelope[EvidenceBundleData], WorkflowState]:
-        evidence_bundle = evidence()
-        state.artifacts["07_evidence"] = "07_evidence.yaml"
-        state.status = (
-            RunStatus.READY_FOR_HUMAN_REVIEW
-            if evidence_bundle.data.final_status == "ready_for_human_review"
-            else RunStatus.HUMAN_REQUIRED
+        deliver.prepare_evidence_node(
+            state,
+            context=WorkflowRuntimeContext(
+                repo=self.repo,
+                artifacts=self.artifacts,
+                checkpoints=self.checkpoints,
+            ),
+            evidence=evidence,
         )
-        state.current_stage = "prepare_evidence"
-        self._save(state)
+        evidence_bundle = self._read_typed_artifact(
+            "07_evidence.yaml",
+            ArtifactType.EVIDENCE_BUNDLE,
+            ArtifactEnvelope[EvidenceBundleData],
+        )
         return evidence_bundle, state
 
     def _save(self, state: WorkflowState) -> None:

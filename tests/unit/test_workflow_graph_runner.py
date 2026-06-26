@@ -15,6 +15,7 @@ from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
 from coductor.workflow.nodes import (
+    deliver,
     execute,
     inspect,
     intake,
@@ -627,6 +628,77 @@ def test_graph_runner_uses_review_node_for_review(
 
     assert calls == [run_id]
     assert review_report.data.verdict == "pass"
+
+
+def test_graph_runner_uses_delivery_node_for_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    goal, _snapshot, _spec, plan_artifact, state = runner.run_front_half(
+        state,
+        requested_mode=ExecutionMode.SOLO,
+    )
+    task_service = TaskExecutionService(tmp_path, config, FakeCodingBackend(), writer)
+    executed, state = runner.run_task_execution(state, plan=plan_artifact, tasks=task_service)
+    completed_task_ids = [task.task_id for task in executed]
+    verification = WorkflowVerificationService(tmp_path, config, writer)
+    state = runner.run_integration(
+        state,
+        plan=plan_artifact,
+        completed_task_ids=completed_task_ids,
+        verification=verification,
+    )
+    gate_report, state = runner.run_quality_gates(state, verification=verification)
+    delivery = ReviewDeliveryService(tmp_path, config, FakeCodingBackend(), writer)
+    review_report, state = runner.run_review(
+        state,
+        review=lambda: delivery.review(repo, run_id, gate_report, completed_task_ids),
+    )
+    calls: list[str] = []
+    original = deliver.prepare_evidence_node
+
+    def recording_prepare_evidence_node(state, *, context=None, evidence=None):
+        calls.append(state.run_id)
+        return original(state, context=context, evidence=evidence)
+
+    monkeypatch.setattr(deliver, "prepare_evidence_node", recording_prepare_evidence_node)
+
+    evidence, state = runner.run_evidence(
+        state,
+        evidence=lambda: delivery.evidence(
+            repo,
+            run_id,
+            goal,
+            gate_report,
+            review_report,
+            ExecutionStrategy.SOLO,
+            completed_task_ids,
+        ),
+    )
+
+    assert calls == [run_id]
+    assert evidence.data.final_status == "ready_for_human_review"
 
 
 def test_graph_runner_runs_repair_and_checkpoint(tmp_path: Path) -> None:

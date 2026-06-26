@@ -479,3 +479,63 @@ def test_run_independent_review_node_saves_review_when_runtime_context_is_presen
     assert saved is not None
     assert saved.review_passed is True
     assert saved.artifacts["06_review"] == "06_review.yaml"
+
+
+def test_prepare_evidence_node_saves_evidence_when_runtime_context_is_present(tmp_path) -> None:
+    run_id = "run_evidence_node_0000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, CoductorConfig.default())
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    def write_evidence():
+        from coductor.artifacts.models import (
+            EvidenceBundleData,
+            GateSummary,
+            ReviewSummary,
+            Rollback,
+        )
+        from coductor.domain.enums import ExecutionStrategy
+
+        envelope = writer.envelope(
+            run_id=run_id,
+            artifact_type=ArtifactType.EVIDENCE_BUNDLE,
+            artifact_id_prefix="art_evidence",
+            status=ArtifactStatus.READY_FOR_HUMAN_REVIEW,
+            producer={"kind": "system", "name": "delivery-manager"},
+            data=EvidenceBundleData(
+                goal_title="修复示例函数",
+                final_status="ready_for_human_review",
+                strategy_used=ExecutionStrategy.SOLO,
+                base_commit="base",
+                head_commit="head",
+                completed_tasks=[],
+                gate_summary=GateSummary(required=0, passed=0, failed=0),
+                review_summary=ReviewSummary(blocking_findings=0),
+                rollback=Rollback(method="git revert", instructions="revert"),
+            ),
+        )
+        repo.write("07_evidence.yaml", envelope)
+        return envelope
+
+    patch = prepare_evidence_node(state, context=context, evidence=write_evidence)
+
+    assert patch == {
+        "current_stage": "prepare_evidence",
+        "status": RunStatus.READY_FOR_HUMAN_REVIEW,
+        "artifacts": {"07_evidence": "07_evidence.yaml"},
+    }
+    assert repo.read("07_evidence.yaml", ArtifactType.EVIDENCE_BUNDLE)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert saved.artifacts["07_evidence"] == "07_evidence.yaml"
