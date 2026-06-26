@@ -33,7 +33,11 @@ class WorkflowVerificationService:
         plan: ArtifactEnvelope[Any],
         completed_task_ids: list[str],
     ) -> None:
-        data = build_integration_data(plan.data.strategy, completed_task_ids)
+        data = build_integration_data(
+            plan.data.strategy,
+            completed_task_ids,
+            run_dir=repo.root,
+        )
         envelope = self.artifacts.envelope(
             run_id=run_id,
             artifact_type=ArtifactType.INTEGRATION,

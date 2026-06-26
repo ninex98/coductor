@@ -76,6 +76,30 @@
       "title": "ArtifactType",
       "type": "string"
     },
+    "FileReference": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "title": "FileReference",
+      "type": "object"
+    },
     "IntegrationData": {
       "additionalProperties": false,
       "properties": {
@@ -100,6 +124,13 @@
         "status": {
           "title": "Status",
           "type": "string"
+        },
+        "worktree_diffs": {
+          "items": {
+            "$ref": "#/$defs/FileReference"
+          },
+          "title": "Worktree Diffs",
+          "type": "array"
         }
       },
       "required": [

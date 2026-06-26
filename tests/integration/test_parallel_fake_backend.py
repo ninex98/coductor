@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,3 +44,36 @@ def test_parallel_fake_backend_merges_safe_tasks(tmp_path: Path) -> None:
     assert integration["data"]["conflicts"] == []
     assert (run_dir / "tasks/T001/task.yaml").exists()
     assert (run_dir / "tasks/T002/task.yaml").exists()
+
+
+def test_parallel_git_repo_records_worktree_diffs(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "coductor@example.test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Coductor Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "README.md").write_text("demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+
+    result = RunService(
+        tmp_path,
+        _passing_config(),
+        backend=FakeCodingBackend(),
+    ).run(
+        "并行更新文档和示例",
+        mode=ExecutionMode.PARALLEL,
+    )
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    run_dir = Path(result.run_dir)
+    integration = load_yaml((run_dir / "04_integration.yaml").read_text())
+    assert integration["data"]["status"] == "merged"
+    assert integration["data"]["worktree_diffs"]
+    assert integration["data"]["worktree_diffs"][0]["path"].endswith(".diff")

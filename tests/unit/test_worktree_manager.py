@@ -32,11 +32,13 @@ def test_worktree_manager_uses_list_commands(
 
     worktree_path = manager.create("run_abc", "T001", "HEAD")
     diff_path = manager.diff("run_abc", "T001")
+    manager.apply(diff_path)
     manager.remove("run_abc", "T001")
 
     assert calls == [
         ["git", "worktree", "add", worktree_path.as_posix(), "HEAD"],
         ["git", "-C", worktree_path.as_posix(), "diff", "--binary"],
+        ["git", "apply", "--3way", diff_path.as_posix()],
         ["git", "worktree", "remove", worktree_path.as_posix(), "--force"],
     ]
     assert diff_path == tmp_path / ".coductor/worktrees/run_abc/T001.diff"

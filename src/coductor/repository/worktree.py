@@ -46,3 +46,12 @@ class WorktreeManager:
         diff_path.parent.mkdir(parents=True, exist_ok=True)
         diff_path.write_text(completed.stdout, encoding="utf-8")
         return diff_path
+
+    def apply(self, diff_path: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "apply", "--3way", diff_path.as_posix()],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
