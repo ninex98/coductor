@@ -216,6 +216,16 @@ class RunService:
                 message=f"unknown run {run_id}",
             )
         run_dir = self.runs_dir / run_id
+        control_status = self.db.get_run(run_id)
+        if control_status is not None and control_status["status"] in {"paused", "stopped"}:
+            status = RunStatus(control_status["status"])
+            return RunResult(
+                run_id=run_id,
+                status=status,
+                run_dir=run_dir.as_posix(),
+                repair_attempts=state.repair_attempts,
+                message=f"run is {status}",
+            )
         repo = ArtifactRepository(run_dir)
         stale_errors = self._validate_resume_artifacts(repo)
         if stale_errors:

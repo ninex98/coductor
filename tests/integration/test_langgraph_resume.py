@@ -132,6 +132,36 @@ def test_resume_continues_from_checkpoint_stage_without_rewriting_goal(
     assert (run_dir / "07_evidence.yaml").exists()
 
 
+def test_resume_does_not_continue_paused_run(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_paused_resume_000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="inspect_repository",
+            raw_goal="从 paused 状态恢复",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+    service.db.update_run_status(run_id, "paused", "2026-06-24T00:00:02Z")
+
+    result = service.resume(run_id)
+
+    assert result.status == "paused"
+    assert "paused" in result.message
+    assert not (run_dir / "07_evidence.yaml").exists()
+    row = service.db.get_run(run_id)
+    assert row is not None
+    assert row["status"] == "paused"
+
+
 class _RecordingBackend(FakeCodingBackend):
     def __init__(self) -> None:
         super().__init__()

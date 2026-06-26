@@ -84,4 +84,6 @@ class RunStatus(StrEnum):
     RUNNING = "running"
     HUMAN_REQUIRED = "human_required"
     READY_FOR_HUMAN_REVIEW = "ready_for_human_review"
+    PAUSED = "paused"
+    STOPPED = "stopped"
     FAILED = "failed"
