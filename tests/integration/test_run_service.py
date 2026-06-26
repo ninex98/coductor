@@ -191,6 +191,51 @@ def test_run_service_langgraph_checkpointer_uses_coductor_database(
     assert received_paths == [(tmp_path / ".coductor" / "coductor.sqlite3").as_posix()]
 
 
+def test_run_service_compile_langgraph_uses_optional_checkpointer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
+    checkpointer = object()
+    received: list[object | None] = []
+
+    monkeypatch.setattr(service, "langgraph_checkpointer", lambda: checkpointer)
+
+    def fake_compile_workflow_graph(*, checkpointer=None):
+        received.append(checkpointer)
+        return "compiled"
+
+    monkeypatch.setattr(
+        "coductor.services.run_service.compile_workflow_graph",
+        fake_compile_workflow_graph,
+    )
+
+    assert service.compile_langgraph() == "compiled"
+    assert received == [checkpointer]
+
+
+def test_run_service_compile_langgraph_allows_missing_checkpointer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
+    received: list[object | None] = []
+
+    monkeypatch.setattr(service, "langgraph_checkpointer", lambda: None)
+
+    def fake_compile_workflow_graph(*, checkpointer=None):
+        received.append(checkpointer)
+        return "compiled"
+
+    monkeypatch.setattr(
+        "coductor.services.run_service.compile_workflow_graph",
+        fake_compile_workflow_graph,
+    )
+
+    assert service.compile_langgraph() == "compiled"
+    assert received == [None]
+
+
 def test_run_service_uses_workflow_graph_runner_for_front_half(
     tmp_path: Path,
     monkeypatch,

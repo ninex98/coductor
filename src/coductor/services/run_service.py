@@ -38,6 +38,7 @@ from coductor.services.workflow_verification_service import WorkflowVerification
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
+from coductor.workflow.graph import compile_workflow_graph
 from coductor.workflow.graph_runner import WorkflowGraphRunner
 from coductor.workflow.langgraph_checkpoint import (
     LangGraphSqliteCheckpointUnavailable,
@@ -270,6 +271,9 @@ class RunService:
         except LangGraphSqliteCheckpointUnavailable:
             connection.close()
             return None
+
+    def compile_langgraph(self) -> Any:
+        return compile_workflow_graph(checkpointer=self.langgraph_checkpointer())
 
     def resume(self, run_id: str) -> RunResult:
         state = self.checkpoints.load(run_id)
