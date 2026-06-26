@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from coductor.artifacts.models import (
     ArtifactEnvelope,
     ArtifactInput,
     EvidenceBundleData,
+    Finding,
     GateReportData,
     GoalData,
     Producer,
@@ -66,20 +68,17 @@ class ReviewDeliveryService:
         )
         handle = self.backend.start_worker(request)
         result = self.backend.continue_worker(handle, request)
-        data = ReviewReportData(
+        data = parse_review_summary(
+            result.summary,
             reviewer_thread_id=result.thread_id,
             reviewed_base_commit=gate_report.data.base_commit,
             reviewed_head_commit=gate_report.data.head_commit,
-            findings=[],
-            blocking_findings=0,
-            verdict="pass",
-            requires_repair=False,
         )
         envelope = self.artifacts.envelope(
             run_id=run_id,
             artifact_type=ArtifactType.REVIEW_REPORT,
             artifact_id_prefix="art_review",
-            status=ArtifactStatus.PASSED,
+            status=ArtifactStatus.PASSED if data.verdict == "pass" else ArtifactStatus.FAILED,
             producer=Producer(kind=ProducerKind.MODEL, name="independent-reviewer"),
             data=data,
             inputs=[
@@ -129,3 +128,74 @@ class ReviewDeliveryService:
         repo.write("07_evidence.yaml", envelope)
         service.write_report(repo.root, data)
         return envelope
+
+
+def parse_review_summary(
+    summary: str,
+    *,
+    reviewer_thread_id: str,
+    reviewed_base_commit: str,
+    reviewed_head_commit: str,
+) -> ReviewReportData:
+    verdict: Literal["pass", "fail"] = "pass"
+    blocking = False
+    findings: list[Finding] = []
+    for raw_line in summary.splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if lowered.startswith("verdict:"):
+            value = line.split(":", 1)[1].strip().lower()
+            verdict = "fail" if value == "fail" else "pass"
+        elif lowered.startswith("blocking:"):
+            value = line.split(":", 1)[1].strip().lower()
+            blocking = value in {"true", "yes", "1", "blocking"}
+        elif lowered.startswith("finding:"):
+            findings.append(_parse_finding(line.split(":", 1)[1].strip(), len(findings) + 1))
+    blocking_findings = len(findings) if blocking else 0
+    requires_repair = verdict == "fail" or blocking_findings > 0
+    if requires_repair:
+        verdict = "fail"
+    return ReviewReportData(
+        reviewer_thread_id=reviewer_thread_id,
+        reviewed_base_commit=reviewed_base_commit,
+        reviewed_head_commit=reviewed_head_commit,
+        findings=findings,
+        blocking_findings=blocking_findings,
+        verdict=verdict,
+        requires_repair=requires_repair,
+    )
+
+
+def _parse_finding(payload: str, index: int) -> Finding:
+    fields = _parse_semicolon_fields(payload)
+    line_value = fields.get("line")
+    return Finding(
+        id=fields.get("id", f"F{index:03d}"),
+        severity=_severity(fields.get("severity", "medium")),
+        category=fields.get("category", "general"),
+        file=fields.get("file"),
+        line=int(line_value) if line_value and line_value.isdigit() else None,
+        description=fields.get("description", "Reviewer reported an unspecified issue."),
+        recommendation=fields.get("recommendation", "Inspect the review output and repair."),
+    )
+
+
+def _parse_semicolon_fields(payload: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for part in payload.split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        fields[key.strip().lower()] = value.strip()
+    return fields
+
+
+def _severity(value: str) -> Literal["low", "medium", "high", "critical"]:
+    normalized = value.strip().lower()
+    severity_map: dict[str, Literal["low", "medium", "high", "critical"]] = {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "critical": "critical",
+    }
+    return severity_map.get(normalized, "medium")
