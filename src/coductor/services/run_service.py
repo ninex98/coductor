@@ -294,7 +294,7 @@ class RunService:
         return compile_workflow_graph(checkpointer=self.langgraph_checkpointer())
 
     def resume(self, run_id: str) -> RunResult:
-        state = self.checkpoints.load(run_id)
+        state = self._load_resume_state(run_id)
         if state is None or state.raw_goal is None:
             return RunResult(
                 run_id=run_id,
@@ -323,6 +323,19 @@ class RunService:
             )
         mode = ExecutionMode(state.requested_mode)
         return self.run(state.raw_goal, mode=mode, resume_run_id=run_id)
+
+    def _load_resume_state(self, run_id: str) -> WorkflowState | None:
+        state = self._load_langgraph_checkpoint(run_id)
+        return state or self.checkpoints.load(run_id)
+
+    def _load_langgraph_checkpoint(self, run_id: str) -> WorkflowState | None:
+        graph = self.compile_langgraph()
+        if graph is None:
+            return None
+        snapshot = graph.get_state(langgraph_thread_config(run_id))
+        if not snapshot.values:
+            return None
+        return WorkflowState.model_validate(snapshot.values)
 
     def _validate_resume_artifacts(self, repo: ArtifactRepository) -> list[str]:
         validator = ArtifactLineageValidator(repo)
