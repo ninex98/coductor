@@ -312,7 +312,7 @@ def control_run(run_id: str, command: str) -> None:
     db = _db(root)
     service = ReportService(db)
     try:
-        service.run_context(run_id, command)
+        service.validate_control_command(run_id, command)
     except RunReportError as error:
         _exit_with_report_error(service, error)
     status = CONTROL_STATUS[command]

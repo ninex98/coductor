@@ -15,6 +15,11 @@ CONTROL_STATUS: dict[str, str] = {
     "review": "review_requested",
 }
 
+CONTROL_ALLOWED_STATUSES: dict[str, set[str]] = {
+    "pause": {"running"},
+    "stop": {"running"},
+}
+
 
 class ReportService:
     def __init__(self, database: Database) -> None:
@@ -120,6 +125,19 @@ class ReportService:
         )
         lines.append(f"Status: {row['status']}")
         return "\n".join(lines) + "\n"
+
+    def validate_control_command(self, run_id: str, command: str) -> dict[str, str]:
+        row = self.run_context(run_id, command)
+        allowed = CONTROL_ALLOWED_STATUSES.get(command)
+        if allowed is not None and row["status"] not in allowed:
+            raise RunReportError(
+                run_id=run_id,
+                stage=command,
+                recoverable=True,
+                next_command=f"coductor status {run_id}",
+                message=f"cannot {command} run in status {row['status']}",
+            )
+        return row
 
     def failure(self, error: RunReportError) -> str:
         lines = self._header(

@@ -405,22 +405,25 @@ def test_cli_missing_run_failure_includes_recovery_context(
 
 
 @pytest.mark.parametrize(
-    ("command", "status"),
+    ("command", "initial_status", "status"),
     [
-        ("approve", "approved"),
-        ("pause", "paused"),
-        ("stop", "stopped"),
-        ("verify", "verification_requested"),
-        ("review", "review_requested"),
+        ("approve", "ready_for_human_review", "approved"),
+        ("pause", "running", "paused"),
+        ("stop", "running", "stopped"),
+        ("verify", "ready_for_human_review", "verification_requested"),
+        ("review", "ready_for_human_review", "review_requested"),
     ],
 )
 def test_cli_control_commands_update_status_and_log_event(
     command: str,
+    initial_status: str,
     status: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.update_run_status("run_abc", initial_status, "2026-06-24T00:00:02Z")
     monkeypatch.chdir(tmp_path)
     cli_runner = CliRunner()
 
@@ -429,9 +432,26 @@ def test_cli_control_commands_update_status_and_log_event(
     assert result.exit_code == 0
     assert f"Stage: {command}" in result.output
     assert f"Status: {status}" in result.output
-    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
     row = db.get_run("run_abc")
     assert row is not None
     assert row["status"] == status
     events = db.list_events("run_abc")
     assert events[-1]["stage"] == command
+
+
+def test_cli_pause_rejects_completed_run_without_changing_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["pause", "run_abc"])
+
+    assert result.exit_code == 1
+    assert "cannot pause run in status ready_for_human_review" in result.output
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    row = db.get_run("run_abc")
+    assert row is not None
+    assert row["status"] == "ready_for_human_review"
