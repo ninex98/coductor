@@ -7,6 +7,13 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from coductor.artifacts.models import (
+    ArtifactEnvelope,
+    GoalData,
+    RepositorySnapshotData,
+    SpecificationData,
+)
+from coductor.domain.enums import ArtifactType, ExecutionMode
 from coductor.workflow.nodes.deliver import prepare_evidence_node
 from coductor.workflow.nodes.execute import dispatch_tasks_node, materialize_tasks_node
 from coductor.workflow.nodes.inspect import inspect_repository_node
@@ -73,10 +80,26 @@ def build_workflow_graph(
         "collect_goal",
         _with_context(collect_goal_node, context) if context is not None else collect_goal_node,
     )
-    _add_node(graph, "inspect_repository", inspect_repository_node)
-    _add_node(graph, "draft_spec", draft_spec_node)
+    _add_node(
+        graph,
+        "inspect_repository",
+        _contextual_inspect_node(context) if context is not None else inspect_repository_node,
+    )
+    _add_node(
+        graph,
+        "draft_spec",
+        _contextual_spec_node(context) if context is not None else draft_spec_node,
+    )
     _add_node(graph, "validate_spec", _stage_node("validate_spec"))
-    _add_node(graph, "create_execution_plan", create_execution_plan_node)
+    _add_node(
+        graph,
+        "create_execution_plan",
+        (
+            _contextual_plan_node(context)
+            if context is not None
+            else create_execution_plan_node
+        ),
+    )
     _add_node(graph, "validate_execution_plan", _stage_node("validate_execution_plan"))
     _add_node(graph, "materialize_tasks", materialize_tasks_node)
     _add_node(graph, "dispatch_tasks", dispatch_tasks_node)
@@ -128,5 +151,55 @@ def _with_context(
 ) -> Callable[[WorkflowState], NodePatch]:
     def node(state: WorkflowState) -> NodePatch:
         return action(state, context=context)
+
+    return node
+
+
+def _contextual_inspect_node(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        goal = ArtifactEnvelope[GoalData].model_validate(
+            context.repo.read("00_goal.yaml", ArtifactType.GOAL).model_dump(mode="json")
+        )
+        return inspect_repository_node(state, context=context, goal=goal)
+
+    return node
+
+
+def _contextual_spec_node(context: WorkflowRuntimeContext) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        goal = ArtifactEnvelope[GoalData].model_validate(
+            context.repo.read("00_goal.yaml", ArtifactType.GOAL).model_dump(mode="json")
+        )
+        snapshot = ArtifactEnvelope[RepositorySnapshotData].model_validate(
+            context.repo.read(
+                "01_repository_snapshot.yaml",
+                ArtifactType.REPOSITORY_SNAPSHOT,
+            ).model_dump(mode="json")
+        )
+        return draft_spec_node(state, context=context, goal=goal, snapshot=snapshot)
+
+    return node
+
+
+def _contextual_plan_node(context: WorkflowRuntimeContext) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        snapshot = ArtifactEnvelope[RepositorySnapshotData].model_validate(
+            context.repo.read(
+                "01_repository_snapshot.yaml",
+                ArtifactType.REPOSITORY_SNAPSHOT,
+            ).model_dump(mode="json")
+        )
+        spec = ArtifactEnvelope[SpecificationData].model_validate(
+            context.repo.read("02_spec.yaml", ArtifactType.SPECIFICATION).model_dump(mode="json")
+        )
+        return create_execution_plan_node(
+            state,
+            context=context,
+            spec=spec,
+            snapshot=snapshot,
+            requested_mode=ExecutionMode(state.requested_mode),
+        )
 
     return node

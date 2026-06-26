@@ -95,3 +95,4 @@ def test_workflow_graph_can_execute_contextual_goal_node(tmp_path) -> None:
     )
 
     assert repo.read("00_goal.yaml").data["raw_request"] == "验证真实图节点"
+    assert (run_dir / "03_execution_plan.yaml").exists()
