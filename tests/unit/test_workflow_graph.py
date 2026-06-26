@@ -189,6 +189,49 @@ def test_contextual_workflow_graph_executes_happy_path_delivery(tmp_path) -> Non
     assert saved.artifacts["07_evidence"] == "07_evidence.yaml"
 
 
+def test_contextual_workflow_graph_persists_completed_pipeline_tasks(tmp_path) -> None:
+    run_id = "run_contextual_graph_pipeline_complete_000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    backend = FakeCodingBackend()
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+        task_execution=TaskExecutionService(tmp_path, config, backend, writer),
+        verification=WorkflowVerificationService(tmp_path, config, writer),
+        review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
+    )
+    compiled = build_workflow_graph(context=context).compile()
+
+    result = compiled.invoke(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            raw_goal="先定义 JSON schema，再基于上游 contract 实现下游功能",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+
+    integration = repo.read("04_integration.yaml").data
+    evidence = repo.read("07_evidence.yaml").data
+    saved = checkpoints.load(run_id)
+
+    assert result["status"] == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result["completed_task_ids"] == ["T001", "T002"]
+    assert integration["merged_tasks"] == ["T001", "T002"]
+    assert evidence["completed_tasks"] == ["T001", "T002"]
+    assert saved is not None
+    assert saved.completed_task_ids == ["T001", "T002"]
+
+
 class _FailingBackend:
     def start_worker(self, request: WorkerRequest) -> WorkerHandle:
         return WorkerHandle(worker_id=request.worker_id, thread_id="thread_failed")

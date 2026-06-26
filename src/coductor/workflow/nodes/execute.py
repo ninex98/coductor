@@ -78,6 +78,9 @@ def dispatch_tasks_node(
                     "last_error": state.last_error,
                     "artifacts": state.artifacts,
                 }
+            if executed_task.task_id not in state.completed_task_ids:
+                state.completed_task_ids.append(executed_task.task_id)
+                context.save(state)
             contracts.update(executed_task.produced_contracts)
         context.save(state)
         return {
@@ -85,5 +88,6 @@ def dispatch_tasks_node(
             "status": state.status,
             "last_error": state.last_error,
             "artifacts": state.artifacts,
+            "completed_task_ids": state.completed_task_ids,
         }
     return {"current_stage": "dispatch_tasks"}

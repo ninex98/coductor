@@ -454,6 +454,8 @@ def _read_execution_plan(
 
 
 def _completed_task_ids(state: WorkflowState) -> list[str]:
+    if state.completed_task_ids:
+        return state.completed_task_ids.copy()
     prefix = "worker_result_"
     return sorted(
         key.removeprefix(prefix)

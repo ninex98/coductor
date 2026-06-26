@@ -27,6 +27,7 @@ class WorkflowState(BaseModel):
     requested_mode: str = "auto"
     run_dir: str | None = None
     artifacts: Annotated[dict[str, str], merge_artifacts] = {}
+    completed_task_ids: list[str] = []
     stale_artifacts: list[str] = []
     updated_at: str | None = None
     gate_passed: bool = True
