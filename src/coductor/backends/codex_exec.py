@@ -9,6 +9,7 @@ from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.config.models import BackendConfig
 from coductor.domain.enums import WorkerStatus
 from coductor.domain.ids import new_id
+from coductor.exceptions import BackendUnavailableError
 
 
 class CodexExecBackend:
@@ -17,33 +18,44 @@ class CodexExecBackend:
         config: BackendConfig | None = None,
         *,
         codex_bin: str = "codex",
-        schemas_dir: Path | str = "schemas",
+        schemas_dir: Path | str | None = None,
         timeout_seconds: int = 1800,
     ) -> None:
         self.config = config
         self.codex_bin = codex_bin
-        self.schemas_dir = Path(schemas_dir)
+        self.schemas_dir = (
+            Path(schemas_dir)
+            if schemas_dir is not None
+            else Path(__file__).resolve().parents[3] / "schemas"
+        )
         self.timeout_seconds = timeout_seconds
 
     def start_worker(self, request: WorkerRequest) -> WorkerHandle:
         return WorkerHandle(worker_id=request.worker_id, thread_id=new_id("codexexec"))
 
     def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
-        schema_name = "review_report" if request.role == "reviewer" else "worker_result"
         command = self.build_command(
             prompt_path=None,
             sandbox=request.sandbox,
-            output_schema=schema_name,
+            output_schema="review_report" if request.role == "reviewer" else "worker_result",
         )
-        completed = subprocess.run(
-            command,
-            input=request.prompt,
-            cwd=request.workspace_path,
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_seconds,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                input=request.prompt,
+                cwd=request.workspace_path,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise BackendUnavailableError(
+                f"Codex CLI executable not found: {self.codex_bin}",
+                stage="backend",
+                recoverable=True,
+                next_command="coductor doctor",
+            ) from exc
         return WorkerResult(
             worker_id=request.worker_id,
             thread_id=handle.thread_id,
@@ -61,15 +73,13 @@ class CodexExecBackend:
     ) -> list[str]:
         del prompt_path
         sandbox_value = self._sandbox_value(sandbox)
-        schema_path = self._schema_path(output_schema)
+        del output_schema
         return [
             self.codex_bin,
             "exec",
             "--sandbox",
             sandbox_value,
-            "--output-schema",
-            schema_path.as_posix(),
-            "--json",
+            "--skip-git-repo-check",
             "-",
         ]
 

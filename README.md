@@ -25,7 +25,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 - 仓库扫描、模拟 Spec、solo Plan、Plan Validator；
 - `FakeCodingBackend` 离线端到端运行；
 - Backend Factory：测试使用 fake，SDK 不可用时按配置降级到 `codex exec`；
-- `codex exec` fallback 使用显式 sandbox、JSONL 输出和 JSON Schema 响应约束；
+- `codex exec` fallback 使用显式 sandbox 和 stdin prompt；Codex CLI 返回普通文本，固定 YAML Artifact 由 Coductor 本地写入；
 - `auto` 会在检测到明确先后依赖时生成顺序 pipeline，并按任务依赖顺序执行；
 - Contract Artifact 记录契约文件 hash，下游 task 消费契约时会被 stale 校验保护；
 - 显式 `parallel` 计划会先检查写路径冲突和 contract handoff，安全时执行独立任务并写 integration report；
@@ -33,7 +33,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 - 独立 Reviewer Worker 和 Evidence Bundle；Evidence 只有在必需 Gate 通过、无 blocking review、且存在 patch evidence 时才 ready；
 - SQLite run/event 索引。
 
-LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后：`fake` 用于离线验证，`codex_sdk` 保持 SDK 边界，SDK 缺失且配置允许时自动 fallback 到 `codex_exec`。
+LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后：`fake` 用于离线验证，`codex_sdk` 保持 SDK 边界，SDK 缺失且配置允许时自动 fallback 到 `codex_exec`。Backend 只提供执行摘要、命令记录和退出原因；`worker_result.yaml`、`review.yaml`、`gate_report.yaml`、`evidence.yaml` 等固定结构文件始终由 Coductor 写入，不能依赖外部 CLI 的 schema 模式。
 
 `resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式和阶段状态。恢复前会校验已有 Artifact 链路，检测到 hash 或 revision 不一致时进入 `human_required`，避免直接覆盖可疑证据。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`；后续会把各阶段副作用继续迁入薄节点，并接入 LangGraph 原生 SQLite saver。
 

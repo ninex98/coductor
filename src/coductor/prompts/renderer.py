@@ -10,5 +10,7 @@ def render_worker_prompt(role: str, context_artifacts: list[str], objective: str
         f"Objective: {objective}\n"
         "Use the following YAML artifacts as authoritative input:\n"
         f"{artifacts}\n"
-        "Return a structured worker_result contract. Do not claim deterministic gates passed."
+        "Make the required workspace changes directly. Return a concise plain-text summary with "
+        "files changed, commands run, and unresolved issues. Coductor will wrap this summary in "
+        "its fixed YAML artifact contract; do not claim deterministic gates passed."
     )

@@ -13,6 +13,7 @@ from coductor.artifacts.serializer import dump_yaml
 from coductor.config.loader import discover_config, load_config, write_config
 from coductor.constants import CODUCTOR_DIR, VERSION
 from coductor.domain.enums import ExecutionMode
+from coductor.exceptions import CoductorError
 from coductor.services.report_service import CONTROL_STATUS, ReportService, RunReportError
 from coductor.services.run_service import RunService
 from coductor.storage.database import Database
@@ -70,7 +71,7 @@ else:  # pragma: no cover
 
 def _print(message: str) -> None:
     if console is not None:
-        console.print(message)
+        console.print(message, markup=False)
     else:
         print(message)
 
@@ -127,10 +128,69 @@ def run_goal(
     if dry_run:
         _print("dry-run: 将执行 Goal → Inspect → Spec → Plan，但不会启动 Worker。")
         return
-    result = RunService(root, config).run(goal, mode=ExecutionMode(mode))
+    result = RunService(root, config, progress=_print_progress).run(
+        goal,
+        mode=ExecutionMode(mode),
+    )
     _print(f"Run ID: {result.run_id}")
     _print(f"状态: {result.status}")
     _print(f"证据目录: {result.run_dir}")
+    summary = _completion_summary(root, Path(result.run_dir), result.run_id)
+    if summary:
+        _print(summary)
+
+
+def _print_progress(stage: str, message: str) -> None:
+    _print(f"[{stage}] {message}")
+
+
+def _completion_summary(root: Path, run_dir: Path, run_id: str) -> str:
+    files = _generated_project_files(root)
+    lines = [
+        "",
+        "下一步:",
+        f"- 查看报告: coductor report {run_id}",
+        f"- 查看产物: coductor artifacts {run_id}",
+    ]
+    if files:
+        lines.append("- 生成文件:")
+        lines.extend(f"  - {path}" for path in files[:12])
+        if len(files) > 12:
+            lines.append(f"  - ... 还有 {len(files) - 12} 个文件")
+    preview = _static_preview_command(root)
+    if preview:
+        lines.extend(
+            [
+                "- 启动预览:",
+                f"  {preview}",
+                "  然后打开: http://127.0.0.1:4173",
+                "  注意: ES module 页面不要直接用 file:// 打开。",
+            ]
+        )
+    if (run_dir / "delivery-report.md").exists():
+        lines.append(f"- 交付报告: {run_dir / 'delivery-report.md'}")
+    return "\n".join(lines)
+
+
+def _generated_project_files(root: Path) -> list[str]:
+    ignored = {".coductor", ".git", "node_modules", ".venv", "vendor"}
+    files: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if relative.parts and relative.parts[0] in ignored:
+            continue
+        files.append(relative.as_posix())
+    return files
+
+
+def _static_preview_command(root: Path) -> str | None:
+    if (root / "src" / "index.html").exists():
+        return "python3 -m http.server 4173 --bind 127.0.0.1 --directory src"
+    if (root / "index.html").exists():
+        return "python3 -m http.server 4173 --bind 127.0.0.1"
+    return None
 
 
 def status_run(run_id: str | None = None, watch: bool = False) -> None:
@@ -317,7 +377,11 @@ if typer is not None:
             typer.Option("--backend", help="后端 / Backend: fake|codex_sdk|codex_exec"),
         ] = None,
     ) -> None:
-        run_goal(goal, mode, dry_run, backend)
+        try:
+            run_goal(goal, mode, dry_run, backend)
+        except CoductorError as error:
+            _print(error.to_display())
+            raise typer.Exit(code=1) from error
 
     @app.command("status", help="查看运行状态 / Show run status.")  # type: ignore[untyped-decorator]
     def status_command(

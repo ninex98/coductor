@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from coductor.artifacts.hashing import file_sha256
 from coductor.artifacts.models import (
-    AcceptanceCriterion,
     ArtifactEnvelope,
     ArtifactInput,
     ArtifactMetadata,
@@ -40,23 +40,16 @@ from coductor.domain.enums import (
     ProducerKind,
     RunStatus,
     SandboxMode,
-    VerificationType,
 )
 from coductor.domain.ids import new_id
 from coductor.domain.models import RunResult
 from coductor.gates.models import QualityGate
 from coductor.gates.runner import GateRunner
-from coductor.planning.planner import (
-    choose_strategy,
-    create_parallel_plan,
-    create_pipeline_plan,
-    create_solo_plan,
-)
 from coductor.prompts.renderer import render_worker_prompt
-from coductor.repository.inspector import RepositoryInspector
 from coductor.repository.merge import build_integration_data
 from coductor.services.evidence_service import EvidenceService
 from coductor.storage.database import Database
+from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.state import WorkflowState
 
@@ -74,6 +67,7 @@ class RunService:
         config: CoductorConfig,
         *,
         backend: CodingBackend | None = None,
+        progress: Callable[[str, str], None] | None = None,
     ) -> None:
         self.root = root
         self.config = config
@@ -82,6 +76,8 @@ class RunService:
         self.db = Database(self.coductor_dir / "coductor.sqlite3")
         self.checkpoints = WorkflowCheckpointStore(self.db, self.runs_dir)
         self.backend = backend or self._backend_from_config()
+        self.progress = progress
+        self.artifacts = WorkflowArtifactWriter(root, config)
 
     def run(
         self,
@@ -110,14 +106,17 @@ class RunService:
         state.artifacts["00_goal"] = "00_goal.yaml"
         state.current_stage = "inspect_repository"
         self.save_checkpoint(state)
+        self._event(run_id, "inspect_repository", "capturing repository snapshot")
         snapshot = self._write_snapshot(repo, run_id, goal)
         state.artifacts["01_repository_snapshot"] = "01_repository_snapshot.yaml"
         state.current_stage = "draft_spec"
         self.save_checkpoint(state)
+        self._event(run_id, "draft_spec", "writing specification artifact")
         spec = self._write_spec(repo, run_id, goal, snapshot)
         state.artifacts["02_spec"] = "02_spec.yaml"
         state.current_stage = "create_execution_plan"
         self.save_checkpoint(state)
+        self._event(run_id, "create_execution_plan", "choosing execution strategy")
         plan = self._write_plan(repo, run_id, spec, snapshot, requested_mode)
         state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
         if not plan.data.validation.valid:
@@ -136,6 +135,7 @@ class RunService:
             )
         state.current_stage = "materialize_tasks"
         self.save_checkpoint(state)
+        self._event(run_id, "materialize_tasks", "preparing worker tasks")
         executed_tasks = self._execute_plan_tasks(repo, run_id, plan, state)
         if not executed_tasks:
             state.status = RunStatus.HUMAN_REQUIRED
@@ -149,15 +149,34 @@ class RunService:
                 repair_attempts=state.repair_attempts,
                 message="执行计划没有可运行任务",
             )
+        failed_task_ids = self._failed_task_ids(
+            repo,
+            [task_id for task_id, _handle in executed_tasks],
+        )
+        if failed_task_ids:
+            state.status = RunStatus.HUMAN_REQUIRED
+            state.current_stage = "human_required"
+            state.last_error = f"worker failed: {', '.join(failed_task_ids)}"
+            self._store_run(state, run_dir)
+            self.save_checkpoint(state)
+            return RunResult(
+                run_id=run_id,
+                status=state.status,
+                run_dir=run_dir.as_posix(),
+                repair_attempts=state.repair_attempts,
+                message=state.last_error,
+            )
         worker_handle = executed_tasks[-1][1]
         repair_target_task_id = executed_tasks[-1][0]
         completed_task_ids = [task_id for task_id, _handle in executed_tasks]
         state.current_stage = "integrate_changes"
         self.save_checkpoint(state)
+        self._event(run_id, "integrate_changes", "recording integration artifact")
         self._write_integration(repo, run_id, plan, completed_task_ids)
         state.artifacts["04_integration"] = "04_integration.yaml"
         state.current_stage = "run_quality_gates"
         self.save_checkpoint(state)
+        self._event(run_id, "run_quality_gates", "running configured quality gates")
 
         gate_report: ArtifactEnvelope[GateReportData] | None = None
         last_fingerprint: str | None = None
@@ -196,6 +215,7 @@ class RunService:
             state.repair_attempts += 1
             state.current_stage = "repair_failure"
             self.save_checkpoint(state)
+            self._event(run_id, "repair_failure", f"repair attempt {state.repair_attempts}")
             self._repair(
                 repo,
                 run_id,
@@ -211,6 +231,7 @@ class RunService:
         state.artifacts["06_review"] = "06_review.yaml"
         state.current_stage = "run_independent_review"
         self.save_checkpoint(state)
+        self._event(run_id, "run_independent_review", "reviewing worker result")
         evidence = self._evidence(
             repo,
             run_id,
@@ -221,6 +242,7 @@ class RunService:
             completed_task_ids,
         )
         state.artifacts["07_evidence"] = "07_evidence.yaml"
+        self._event(run_id, "prepare_evidence", "writing evidence bundle")
         state.status = (
             RunStatus.READY_FOR_HUMAN_REVIEW
             if evidence.data.final_status == "ready_for_human_review"
@@ -331,29 +353,7 @@ class RunService:
         raw_goal: str,
         requested_mode: ExecutionMode,
     ) -> ArtifactEnvelope[GoalData]:
-        goal_type = (
-            "bugfix"
-            if any(word in raw_goal for word in ["修复", "fix", "bug"])
-            else "feature"
-        )
-        data = GoalData(
-            title=raw_goal[:60],
-            raw_request=raw_goal,
-            goal_type=goal_type,
-            requested_mode=requested_mode,
-            target_repository=".",
-            user_constraints=[],
-        )
-        envelope = self._envelope(
-            run_id=run_id,
-            artifact_type=ArtifactType.GOAL,
-            artifact_id_prefix="art_goal",
-            status=ArtifactStatus.ACCEPTED,
-            producer=Producer(kind=ProducerKind.HUMAN, name="cli-user"),
-            data=data,
-        )
-        repo.write("00_goal.yaml", envelope)
-        return envelope
+        return self.artifacts.write_goal(repo, run_id, raw_goal, requested_mode)
 
     def _write_snapshot(
         self,
@@ -361,18 +361,7 @@ class RunService:
         run_id: str,
         goal: ArtifactEnvelope[GoalData],
     ) -> ArtifactEnvelope[RepositorySnapshotData]:
-        data = RepositoryInspector(self.root, self.config).inspect()
-        envelope = self._envelope(
-            run_id=run_id,
-            artifact_type=ArtifactType.REPOSITORY_SNAPSHOT,
-            artifact_id_prefix="art_repo",
-            status=ArtifactStatus.COMPLETE,
-            producer=Producer(kind=ProducerKind.SYSTEM, name="repository-inspector"),
-            inputs=[ArtifactInput.model_validate(repo.input_for("00_goal.yaml", goal))],
-            data=data,
-        )
-        repo.write("01_repository_snapshot.yaml", envelope)
-        return envelope
+        return self.artifacts.write_snapshot(repo, run_id, goal)
 
     def _write_spec(
         self,
@@ -381,42 +370,7 @@ class RunService:
         goal: ArtifactEnvelope[GoalData],
         snapshot: ArtifactEnvelope[RepositorySnapshotData],
     ) -> ArtifactEnvelope[SpecificationData]:
-        data = SpecificationData(
-            objective=goal.data.raw_request,
-            in_scope=["按目标完成最小可验证变更", "补充或运行相关验证"],
-            out_of_scope=["Web 控制台", "自动 PR", "远程推送", "生产环境操作"],
-            constraints=[
-                "危险能力默认关闭",
-                "完成状态只由质量门和审查证据决定",
-            ],
-            assumptions=[],
-            acceptance_criteria=[
-                AcceptanceCriterion(
-                    id="AC001",
-                    statement="必需质量门通过，且生成 evidence bundle",
-                    verification=VerificationType.AUTOMATED,
-                    priority="required",
-                )
-            ],
-            risks=snapshot.data.risks,
-            unresolved_questions=[],
-        )
-        envelope = self._envelope(
-            run_id=run_id,
-            artifact_type=ArtifactType.SPECIFICATION,
-            artifact_id_prefix="art_spec",
-            status=ArtifactStatus.APPROVED,
-            producer=Producer(kind=ProducerKind.MODEL, name="specification-agent"),
-            inputs=[
-                ArtifactInput.model_validate(repo.input_for("00_goal.yaml", goal)),
-                ArtifactInput.model_validate(
-                    repo.input_for("01_repository_snapshot.yaml", snapshot)
-                ),
-            ],
-            data=data,
-        )
-        repo.write("02_spec.yaml", envelope)
-        return envelope
+        return self.artifacts.write_spec(repo, run_id, goal, snapshot)
 
     def _write_plan(
         self,
@@ -426,37 +380,7 @@ class RunService:
         snapshot: ArtifactEnvelope[RepositorySnapshotData],
         requested_mode: ExecutionMode,
     ) -> ArtifactEnvelope[Any]:
-        decision = choose_strategy(spec.data.objective, requested_mode=requested_mode)
-        if decision.strategy == ExecutionStrategy.PIPELINE:
-            data = create_pipeline_plan(
-                spec.data,
-                snapshot.data.base_commit,
-                decision.reasoning,
-            )
-        elif decision.strategy == ExecutionStrategy.PARALLEL:
-            data = create_parallel_plan(
-                spec.data,
-                snapshot.data.base_commit,
-                decision.reasoning,
-            )
-        else:
-            data = create_solo_plan(spec.data, snapshot.data.base_commit)
-        envelope = self._envelope(
-            run_id=run_id,
-            artifact_type=ArtifactType.EXECUTION_PLAN,
-            artifact_id_prefix="art_plan",
-            status=ArtifactStatus.VALIDATED if data.validation.valid else ArtifactStatus.FAILED,
-            producer=Producer(kind=ProducerKind.MODEL, name="planning-agent"),
-            inputs=[
-                ArtifactInput.model_validate(repo.input_for("02_spec.yaml", spec)),
-                ArtifactInput.model_validate(
-                    repo.input_for("01_repository_snapshot.yaml", snapshot)
-                ),
-            ],
-            data=data,
-        )
-        repo.write("03_execution_plan.yaml", envelope)
-        return envelope
+        return self.artifacts.write_plan(repo, run_id, spec, snapshot, requested_mode)
 
     def _execute_plan_tasks(
         self,
@@ -527,6 +451,15 @@ class RunService:
             completed.add(task.id)
             del remaining[task.id]
         return ordered
+
+    def _failed_task_ids(self, repo: ArtifactRepository, task_ids: list[str]) -> list[str]:
+        failed: list[str] = []
+        for task_id in task_ids:
+            result = repo.read(f"tasks/{task_id}/worker_result.yaml", ArtifactType.WORKER_RESULT)
+            data = WorkerResultData.model_validate(result.data)
+            if data.exit_reason != "completed":
+                failed.append(task_id)
+        return failed
 
     def _write_task(
         self,
@@ -875,3 +808,8 @@ class RunService:
 
     def _event(self, run_id: str, stage: str, message: str) -> None:
         self.db.add_event(run_id, stage, message, utc_now())
+        self._progress(stage, message)
+
+    def _progress(self, stage: str, message: str) -> None:
+        if self.progress is not None:
+            self.progress(stage, message)

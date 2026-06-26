@@ -27,9 +27,7 @@ def write_config(root: Path, config: CoductorConfig) -> Path:
 def discover_config(root: Path) -> CoductorConfig:
     config = CoductorConfig.default()
     config.project.name = root.name
-    commands = _discover_quality_gates(root)
-    if commands:
-        config.quality_gates = commands
+    config.quality_gates = _discover_quality_gates(root)
     return config
 
 

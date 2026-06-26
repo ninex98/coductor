@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from coductor import cli
 from coductor.cli import app
+from coductor.domain.enums import RunStatus
+from coductor.domain.models import RunResult
+from coductor.exceptions import BackendUnavailableError
 from coductor.storage.database import Database
 
 
@@ -41,6 +45,84 @@ def test_cli_version_option() -> None:
 
     assert result.exit_code == 0
     assert "coductor 0.1.0" in result.output
+
+
+def test_cli_run_failure_uses_recovery_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def raise_backend_error(*args, **kwargs):
+        raise BackendUnavailableError(
+            "Codex CLI executable not found: codex",
+            stage="backend",
+            recoverable=True,
+            next_command="coductor doctor",
+        )
+
+    monkeypatch.setattr(cli, "run_goal", raise_backend_error)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["run", "修复问题"])
+
+    assert result.exit_code == 1
+    assert "阶段: backend" in result.output
+    assert "下一步: coductor doctor" in result.output
+    assert "Codex CLI executable not found: codex" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_run_prints_progress_and_next_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / ".coductor" / "runs" / "run_abc"
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.html").write_text(
+        "<script type='module'></script>",
+        encoding="utf-8",
+    )
+    run_dir.mkdir(parents=True)
+
+    def fake_run(self, goal, *, mode=None, resume_run_id=None):
+        self._progress("collect_goal", "accepted user goal")
+        self._progress("dispatch_tasks", "dispatch T001")
+        return RunResult(
+            run_id="run_abc",
+            status=RunStatus.READY_FOR_HUMAN_REVIEW,
+            run_dir=run_dir.as_posix(),
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.RunService, "run", fake_run)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["run", "创建网页小游戏"])
+
+    assert result.exit_code == 0
+    assert "[collect_goal] accepted user goal" in result.output
+    assert "[dispatch_tasks] dispatch T001" in result.output
+    assert "生成文件:" in result.output
+    assert "src/index.html" in result.output
+    assert "启动预览:" in result.output
+    assert "python3 -m http.server 4173 --bind 127.0.0.1 --directory src" in result.output
+
+
+def test_cli_init_empty_project_has_no_default_python_gates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    config = (tmp_path / "coductor.yaml").read_text(encoding="utf-8")
+    assert "quality_gates: []" in config
+    assert "pytest -q" not in config
+    assert "ruff check ." not in config
 
 
 def _seed_run(root: Path, run_id: str = "run_abc") -> Path:

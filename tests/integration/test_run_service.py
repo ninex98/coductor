@@ -3,9 +3,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig, QualityGateConfig
-from coductor.domain.enums import RunStatus
+from coductor.domain.enums import RunStatus, WorkerStatus
 from coductor.services.run_service import RunService
 
 
@@ -59,3 +60,36 @@ def test_run_stops_at_max_repair_attempts(tmp_path: Path) -> None:
     assert result.status == RunStatus.HUMAN_REQUIRED
     assert result.repair_attempts == 1
     assert (tmp_path / ".coductor" / "runs" / result.run_id / "05_gate_report.yaml").exists()
+
+
+class FailingBackend:
+    def start_worker(self, request: WorkerRequest) -> WorkerHandle:
+        return WorkerHandle(worker_id=request.worker_id, thread_id="thread_failed")
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        return WorkerResult(
+            worker_id=request.worker_id,
+            thread_id=handle.thread_id,
+            summary="upstream 502",
+            exit_reason="failed",
+        )
+
+    def cancel_worker(self, handle: WorkerHandle) -> None:
+        return None
+
+    def get_status(self, handle: WorkerHandle) -> WorkerStatus:
+        return WorkerStatus.FAILED
+
+
+def test_run_requires_human_when_worker_fails_even_without_gates(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+
+    result = RunService(tmp_path, config, backend=FailingBackend()).run("创建网页小游戏")
+
+    assert result.status == RunStatus.HUMAN_REQUIRED
+    assert result.message == "worker failed: T001"
+    run_dir = tmp_path / ".coductor" / "runs" / result.run_id
+    assert (run_dir / "tasks" / "T001" / "worker_result.yaml").exists()
+    assert not (run_dir / "07_evidence.yaml").exists()

@@ -5,7 +5,7 @@ import pytest
 from coductor.backends import factory
 from coductor.backends.codex_exec import CodexExecBackend
 from coductor.backends.codex_sdk import CodexSdkBackend
-from coductor.backends.factory import create_backend
+from coductor.backends.factory import create_backend, resolve_codex_bin
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.exceptions import BackendUnavailableError
@@ -27,6 +27,26 @@ def test_backend_factory_selects_codex_exec() -> None:
     backend = create_backend(config)
 
     assert isinstance(backend, CodexExecBackend)
+
+
+def test_backend_factory_resolves_codex_exec_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "codex_exec"
+    monkeypatch.setattr(factory.shutil, "which", lambda binary: f"/opt/bin/{binary}")
+
+    backend = create_backend(config)
+
+    assert isinstance(backend, CodexExecBackend)
+    assert backend.codex_bin == "/opt/bin/codex"
+
+
+def test_backend_factory_uses_codex_app_cli_when_path_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(factory.shutil, "which", lambda binary: None)
+    monkeypatch.setattr(factory.Path, "exists", lambda path: True)
+
+    assert resolve_codex_bin() == "/Applications/Codex.app/Contents/Resources/codex"
 
 
 def test_backend_factory_falls_back_to_codex_exec_when_sdk_unavailable() -> None:
