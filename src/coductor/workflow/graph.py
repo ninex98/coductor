@@ -86,6 +86,14 @@ def _route_after_review(state: WorkflowState) -> str:
     return "prepare_evidence"
 
 
+def _entry_node(state: WorkflowState) -> str:
+    if state.current_stage in WORKFLOW_NODES:
+        return state.current_stage
+    if state.current_stage == "human_required":
+        return END
+    return "collect_goal"
+
+
 def build_workflow_graph(
     *,
     context: WorkflowRuntimeContext | None = None,
@@ -181,7 +189,7 @@ def build_workflow_graph(
         ),
     )
 
-    graph.add_edge(START, "collect_goal")
+    graph.add_conditional_edges(START, _entry_node)
     graph.add_edge("collect_goal", "inspect_repository")
     graph.add_edge("inspect_repository", "draft_spec")
     graph.add_edge("draft_spec", "validate_spec")

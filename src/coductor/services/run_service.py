@@ -233,8 +233,16 @@ class RunService:
                 repair_attempts=state.repair_attempts,
                 message=f"stale artifact lineage detected: {stale_errors[0]}",
             )
-        mode = ExecutionMode(state.requested_mode)
-        return self.run(state.raw_goal, mode=mode, resume_run_id=run_id)
+        state.run_dir = run_dir.as_posix()
+        state.max_repair_attempts = self.config.workflow.max_repair_attempts
+        if not self._resume_artifacts_complete(state, repo):
+            state.current_stage = "collect_goal"
+            state.artifacts = {}
+        return self._run_contextual_graph(
+            state,
+            repo=repo,
+            run_dir=run_dir,
+        )
 
     def _load_resume_state(self, run_id: str) -> WorkflowState | None:
         state = self._load_langgraph_checkpoint(run_id)
@@ -263,6 +271,18 @@ class RunService:
                 continue
             paths.append(relative.as_posix())
         return paths
+
+    def _resume_artifacts_complete(
+        self,
+        state: WorkflowState,
+        repo: ArtifactRepository,
+    ) -> bool:
+        if state.current_stage != "collect_goal" and not state.artifacts:
+            return False
+        for artifact_path in state.artifacts.values():
+            if not (repo.root / artifact_path).exists():
+                return False
+        return True
 
     def _backend_from_config(self) -> CodingBackend:
         return create_backend(self.config)

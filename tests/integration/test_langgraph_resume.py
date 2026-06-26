@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig, QualityGateConfig
 from coductor.domain.enums import RunStatus
@@ -90,6 +91,42 @@ def test_resume_loads_state_from_langgraph_sqlite_checkpoint(tmp_path: Path) -> 
     assert result.run_id == run_id
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert result.repair_attempts == 1
+    assert (run_dir / "07_evidence.yaml").exists()
+
+
+def test_resume_continues_from_checkpoint_stage_without_rewriting_goal(
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_stage_resume_000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    service.artifacts.write_goal(
+        ArtifactRepository(run_dir),
+        run_id,
+        "从 inspect 阶段继续",
+        service.config.workflow.default_mode,
+    )
+    original_goal = (run_dir / "00_goal.yaml").read_text(encoding="utf-8")
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="inspect_repository",
+            raw_goal="从 inspect 阶段继续",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+            artifacts={"00_goal": "00_goal.yaml"},
+        )
+    )
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert (run_dir / "00_goal.yaml").read_text(encoding="utf-8") == original_goal
     assert (run_dir / "07_evidence.yaml").exists()
 
 
