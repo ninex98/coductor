@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeVar
+
+from pydantic import BaseModel
 
 from coductor.artifacts.models import (
     ArtifactEnvelope,
@@ -26,6 +28,8 @@ from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.nodes import inspect, intake, plan, specify
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
+
+DataT = TypeVar("DataT", bound=BaseModel)
 
 
 class WorkflowGraphRunner:
@@ -64,16 +68,17 @@ class WorkflowGraphRunner:
             state,
             context=context,
         )
-        goal = ArtifactEnvelope[GoalData].model_validate(
-            self.repo.read("00_goal.yaml", ArtifactType.GOAL).model_dump(mode="json")
+        goal = self._read_typed_artifact(
+            "00_goal.yaml",
+            ArtifactType.GOAL,
+            ArtifactEnvelope[GoalData],
         )
 
         inspect.inspect_repository_node(state, context=context, goal=goal)
-        snapshot = ArtifactEnvelope[RepositorySnapshotData].model_validate(
-            self.repo.read(
-                "01_repository_snapshot.yaml",
-                ArtifactType.REPOSITORY_SNAPSHOT,
-            ).model_dump(mode="json")
+        snapshot = self._read_typed_artifact(
+            "01_repository_snapshot.yaml",
+            ArtifactType.REPOSITORY_SNAPSHOT,
+            ArtifactEnvelope[RepositorySnapshotData],
         )
 
         specify.draft_spec_node(
@@ -82,8 +87,10 @@ class WorkflowGraphRunner:
             goal=goal,
             snapshot=snapshot,
         )
-        spec = ArtifactEnvelope[SpecificationData].model_validate(
-            self.repo.read("02_spec.yaml", ArtifactType.SPECIFICATION).model_dump(mode="json")
+        spec = self._read_typed_artifact(
+            "02_spec.yaml",
+            ArtifactType.SPECIFICATION,
+            ArtifactEnvelope[SpecificationData],
         )
 
         plan.create_execution_plan_node(
@@ -93,13 +100,22 @@ class WorkflowGraphRunner:
             snapshot=snapshot,
             requested_mode=requested_mode,
         )
-        execution_plan = ArtifactEnvelope[ExecutionPlanData].model_validate(
-            self.repo.read(
-                "03_execution_plan.yaml",
-                ArtifactType.EXECUTION_PLAN,
-            ).model_dump(mode="json")
+        execution_plan = self._read_typed_artifact(
+            "03_execution_plan.yaml",
+            ArtifactType.EXECUTION_PLAN,
+            ArtifactEnvelope[ExecutionPlanData],
         )
         return goal, snapshot, spec, execution_plan, state
+
+    def _read_typed_artifact(
+        self,
+        relative_path: str,
+        artifact_type: ArtifactType,
+        envelope_type: type[ArtifactEnvelope[DataT]],
+    ) -> ArtifactEnvelope[DataT]:
+        return envelope_type.model_validate(
+            self.repo.read(relative_path, artifact_type).model_dump(mode="json")
+        )
 
     def run_task_execution(
         self,
