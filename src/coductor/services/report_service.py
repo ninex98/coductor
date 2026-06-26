@@ -18,7 +18,9 @@ CONTROL_STATUS: dict[str, str] = {
 CONTROL_ALLOWED_STATUSES: dict[str, set[str]] = {
     "approve": {"human_required"},
     "pause": {"running"},
+    "review": {"human_required", "ready_for_human_review"},
     "stop": {"running"},
+    "verify": {"human_required", "ready_for_human_review"},
 }
 
 

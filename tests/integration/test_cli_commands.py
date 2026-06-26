@@ -473,3 +473,24 @@ def test_cli_approve_rejects_ready_run_without_changing_status(
     row = db.get_run("run_abc")
     assert row is not None
     assert row["status"] == "ready_for_human_review"
+
+
+@pytest.mark.parametrize("command", ["verify", "review"])
+def test_cli_review_controls_reject_running_run_without_changing_status(
+    command: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.update_run_status("run_abc", "running", "2026-06-24T00:00:02Z")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, [command, "run_abc"])
+
+    assert result.exit_code == 1
+    assert f"cannot {command} run in status running" in result.output
+    row = db.get_run("run_abc")
+    assert row is not None
+    assert row["status"] == "running"
