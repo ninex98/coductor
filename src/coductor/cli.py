@@ -9,14 +9,20 @@ import sys
 from pathlib import Path
 from typing import Annotated, Any
 
+from coductor.artifacts.models import ArtifactEnvelope, GateReportData, GoalData
+from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.serializer import dump_yaml
+from coductor.backends.factory import create_backend
 from coductor.config.loader import discover_config, load_config, write_config
 from coductor.constants import CODUCTOR_DIR, VERSION
-from coductor.domain.enums import ExecutionMode
+from coductor.domain.enums import ArtifactType, ExecutionMode, ExecutionStrategy, RunStatus
 from coductor.exceptions import CoductorError
 from coductor.services.report_service import CONTROL_STATUS, ReportService, RunReportError
+from coductor.services.review_delivery_service import ReviewDeliveryService
 from coductor.services.run_service import RunService
+from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
+from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
 try:  # pragma: no cover - fallback keeps local smoke checks useful without dependencies
     import typer
@@ -315,6 +321,14 @@ def control_run(run_id: str, command: str) -> None:
         service.validate_control_command(run_id, command)
     except RunReportError as error:
         _exit_with_report_error(service, error)
+    if command == "verify":
+        _rerun_verification(root, db, run_id)
+        _print(service.control_result(run_id, command))
+        return
+    if command == "review":
+        _rerun_review(root, db, run_id)
+        _print(service.control_result(run_id, command))
+        return
     status = CONTROL_STATUS[command]
     now = _utc_now()
     db.update_run_status(run_id, status, now)
@@ -340,6 +354,70 @@ def verify_run(run_id: str) -> None:
 
 def review_run(run_id: str) -> None:
     control_run(run_id, "review")
+
+
+def _rerun_verification(root: Path, db: Database, run_id: str) -> None:
+    row = db.get_run(run_id)
+    if row is None:
+        return
+    config = load_config(root)
+    repo = ArtifactRepository(Path(row["run_dir"]))
+    writer = WorkflowArtifactWriter(root, config)
+    gate_report = WorkflowVerificationService(root, config, writer).run_gates(repo, run_id)
+    status = (
+        RunStatus.READY_FOR_HUMAN_REVIEW
+        if gate_report.data.required_gates_passed
+        else RunStatus.HUMAN_REQUIRED
+    )
+    now = _utc_now()
+    db.update_run_status(run_id, status, now)
+    db.add_event(run_id, "verify", "quality gates rerun by cli", now)
+
+
+def _rerun_review(root: Path, db: Database, run_id: str) -> None:
+    row = db.get_run(run_id)
+    if row is None:
+        return
+    config = load_config(root)
+    repo = ArtifactRepository(Path(row["run_dir"]))
+    writer = WorkflowArtifactWriter(root, config)
+    delivery = ReviewDeliveryService(root, config, create_backend(config), writer)
+    goal = ArtifactEnvelope[GoalData].model_validate(
+        repo.read("00_goal.yaml", ArtifactType.GOAL).model_dump(mode="json")
+    )
+    gate_report = ArtifactEnvelope[GateReportData].model_validate(
+        repo.read("05_gate_report.yaml", ArtifactType.GATE_REPORT).model_dump(mode="json")
+    )
+    completed_task_ids = _completed_task_ids_for_review(repo)
+    review = delivery.review(repo, run_id, gate_report, completed_task_ids)
+    evidence = delivery.evidence(
+        repo,
+        run_id,
+        goal,
+        gate_report,
+        review,
+        ExecutionStrategy.SOLO,
+        completed_task_ids,
+    )
+    status = (
+        RunStatus.READY_FOR_HUMAN_REVIEW
+        if evidence.data.final_status == "ready_for_human_review"
+        else RunStatus.HUMAN_REQUIRED
+    )
+    now = _utc_now()
+    db.update_run_status(run_id, status, now)
+    db.add_event(run_id, "review", "independent review rerun by cli", now)
+
+
+def _completed_task_ids_for_review(repo: ArtifactRepository) -> list[str]:
+    task_ids: list[str] = []
+    tasks_dir = repo.root / "tasks"
+    if not tasks_dir.exists():
+        return task_ids
+    for path in sorted(tasks_dir.iterdir()):
+        if path.is_dir() and (path / "patch.diff").exists():
+            task_ids.append(path.name)
+    return task_ids
 
 
 def doctor() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -410,8 +411,6 @@ def test_cli_missing_run_failure_includes_recovery_context(
         ("approve", "human_required", "approved"),
         ("pause", "running", "paused"),
         ("stop", "running", "stopped"),
-        ("verify", "ready_for_human_review", "verification_requested"),
-        ("review", "ready_for_human_review", "review_requested"),
     ],
 )
 def test_cli_control_commands_update_status_and_log_event(
@@ -437,6 +436,99 @@ def test_cli_control_commands_update_status_and_log_event(
     assert row["status"] == status
     events = db.list_events("run_abc")
     assert events[-1]["stage"] == command
+
+
+def test_cli_verify_reruns_quality_gates_and_updates_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = _seed_run(tmp_path)
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(
+            [
+                'schema_version: "1.0"',
+                "backend:",
+                "  provider: fake",
+                "quality_gates:",
+                "  - id: unit_tests",
+                f"    command: {sys.executable} -c 'print(1)'",
+                "    required: true",
+                "    timeout_seconds: 30",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["verify", "run_abc"])
+
+    assert result.exit_code == 0
+    assert "Stage: verify" in result.output
+    gate_report = (run_dir / "05_gate_report.yaml").read_text(encoding="utf-8")
+    assert "artifact_type: gate_report" in gate_report
+    assert "required_gates_passed: true" in gate_report
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    row = db.get_run("run_abc")
+    assert row is not None
+    assert row["status"] == "ready_for_human_review"
+    assert db.list_events("run_abc")[-1]["stage"] == "verify"
+
+
+def test_cli_review_reruns_review_and_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = _seed_run(tmp_path)
+    from coductor.artifacts.models import GateReportData, Producer
+    from coductor.artifacts.repository import ArtifactRepository
+    from coductor.config.models import CoductorConfig
+    from coductor.domain.enums import ArtifactStatus, ArtifactType, ExecutionMode, ProducerKind
+    from coductor.workflow.artifact_writer import WorkflowArtifactWriter
+
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(['schema_version: "1.0"', "backend:", "  provider: fake"]) + "\n",
+        encoding="utf-8",
+    )
+    repo = ArtifactRepository(run_dir)
+    writer = WorkflowArtifactWriter(tmp_path, CoductorConfig.default())
+    writer.write_goal(repo, "run_abc", "修复示例函数", ExecutionMode.AUTO)
+    (run_dir / "tasks/T001/patch.diff").write_text(
+        "diff --git a/math_utils.py b/math_utils.py\n",
+        encoding="utf-8",
+    )
+    gate_report = writer.envelope(
+        run_id="run_abc",
+        artifact_type=ArtifactType.GATE_REPORT,
+        artifact_id_prefix="art_gate",
+        status=ArtifactStatus.PASSED,
+        producer=Producer(kind=ProducerKind.TOOL, name="gate-runner"),
+        data=GateReportData(
+            base_commit="base",
+            head_commit="head",
+            gates=[],
+            required_gates_passed=True,
+            next_action="review",
+        ),
+    )
+    repo.write("05_gate_report.yaml", gate_report)
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["review", "run_abc"])
+
+    assert result.exit_code == 0
+    assert "Stage: review" in result.output
+    assert (run_dir / "06_review.yaml").exists()
+    assert (run_dir / "07_evidence.yaml").exists()
+    evidence = (run_dir / "07_evidence.yaml").read_text(encoding="utf-8")
+    assert "final_status: ready_for_human_review" in evidence
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    row = db.get_run("run_abc")
+    assert row is not None
+    assert row["status"] == "ready_for_human_review"
+    assert db.list_events("run_abc")[-1]["stage"] == "review"
 
 
 def test_cli_pause_rejects_completed_run_without_changing_status(
