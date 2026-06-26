@@ -24,6 +24,8 @@ def test_compiled_workflow_graph_can_advance_state() -> None:
 
     assert result["current_stage"] == "prepare_evidence"
     assert result["status"] == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result["artifacts"]["00_goal"] == "00_goal.yaml"
+    assert result["artifacts"]["07_evidence"] == "07_evidence.yaml"
 
 
 def test_workflow_graph_routes_gate_failure_through_repair() -> None:

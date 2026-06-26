@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import BaseModel, ConfigDict
 
 from coductor.domain.enums import RunStatus
+
+
+def merge_artifacts(left: dict[str, str], right: dict[str, str] | None) -> dict[str, str]:
+    if right is None:
+        return left
+    return {**left, **right}
 
 
 class WorkflowState(BaseModel):
@@ -18,7 +26,7 @@ class WorkflowState(BaseModel):
     raw_goal: str | None = None
     requested_mode: str = "auto"
     run_dir: str | None = None
-    artifacts: dict[str, str] = {}
+    artifacts: Annotated[dict[str, str], merge_artifacts] = {}
     stale_artifacts: list[str] = []
     updated_at: str | None = None
     gate_passed: bool = True
