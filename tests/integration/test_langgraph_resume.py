@@ -162,6 +162,36 @@ def test_resume_does_not_continue_paused_run(tmp_path: Path) -> None:
     assert row["status"] == "paused"
 
 
+def test_resume_does_not_continue_stopped_run(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_stopped_resume_000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="inspect_repository",
+            raw_goal="从 stopped 状态恢复",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+    service.db.update_run_status(run_id, "stopped", "2026-06-24T00:00:02Z")
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.STOPPED
+    assert "stopped" in result.message
+    assert not (run_dir / "07_evidence.yaml").exists()
+    row = service.db.get_run(run_id)
+    assert row is not None
+    assert row["status"] == "stopped"
+
+
 class _RecordingBackend(FakeCodingBackend):
     def __init__(self) -> None:
         super().__init__()
