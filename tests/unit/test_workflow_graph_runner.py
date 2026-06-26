@@ -14,7 +14,16 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
-from coductor.workflow.nodes import execute, inspect, intake, integrate, plan, specify, verify
+from coductor.workflow.nodes import (
+    execute,
+    inspect,
+    intake,
+    integrate,
+    plan,
+    repair,
+    specify,
+    verify,
+)
 from coductor.workflow.state import WorkflowState
 
 
@@ -605,3 +614,72 @@ def test_graph_runner_runs_repair_and_checkpoint(tmp_path: Path) -> None:
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.artifacts["repair_result_R001"] == "repairs/R001/repair_result.yaml"
+
+
+def test_graph_runner_uses_repair_failure_node_for_repair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    backend = FakeCodingBackend()
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    _goal, _snapshot, _spec, plan_artifact, state = runner.run_front_half(
+        state,
+        requested_mode=ExecutionMode.SOLO,
+    )
+    task_service = TaskExecutionService(tmp_path, config, backend, writer)
+    executed, state = runner.run_task_execution(state, plan=plan_artifact, tasks=task_service)
+    verification = WorkflowVerificationService(tmp_path, config, writer)
+    gate_report, state = runner.run_quality_gates(state, verification=verification)
+    repair_service = RepairService(tmp_path, config, backend, writer)
+    calls: list[str] = []
+    original = repair.repair_failure_node
+
+    def recording_repair_failure_node(
+        state,
+        *,
+        context=None,
+        builder_handle=None,
+        gate_report=None,
+        repair=None,
+        target_task_id=None,
+    ):
+        calls.append(state.run_id)
+        return original(
+            state,
+            context=context,
+            builder_handle=builder_handle,
+            gate_report=gate_report,
+            repair=repair,
+            target_task_id=target_task_id,
+        )
+
+    monkeypatch.setattr(repair, "repair_failure_node", recording_repair_failure_node)
+
+    runner.run_repair(
+        state,
+        builder_handle=executed[-1].handle,
+        gate_report=gate_report,
+        repair=repair_service,
+        target_task_id=executed[-1].task_id,
+    )
+
+    assert calls == [run_id]

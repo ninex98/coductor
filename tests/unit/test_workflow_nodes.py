@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from coductor.artifacts.models import GateReportData, GateResultData
 from coductor.artifacts.repository import ArtifactRepository
+from coductor.backends.base import WorkerHandle
+from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
-from coductor.domain.enums import ArtifactType, ExecutionMode, RunStatus
+from coductor.domain.enums import ArtifactStatus, ArtifactType, ExecutionMode, RunStatus
+from coductor.services.repair_service import RepairService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
@@ -349,3 +353,75 @@ def test_run_quality_gates_node_writes_gate_report_when_runtime_context_is_prese
     assert saved.artifacts["05_gate_report"] == "05_gate_report.yaml"
     assert saved.current_stage == "run_quality_gates"
     assert saved.gate_passed is True
+
+
+def test_repair_failure_node_writes_repair_artifacts_when_runtime_context_is_present(
+    tmp_path,
+) -> None:
+    run_id = "run_repair_node_000000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    gate_report = writer.envelope(
+        run_id=run_id,
+        artifact_type=ArtifactType.GATE_REPORT,
+        artifact_id_prefix="art_gates",
+        status=ArtifactStatus.FAILED,
+        producer={"kind": "tool", "name": "gate-runner"},
+        data=GateReportData(
+            base_commit="base",
+            head_commit="head",
+            gates=[
+                GateResultData(
+                    id="unit_tests",
+                    required=True,
+                    status="failed",
+                    command="pytest",
+                    exit_code=1,
+                    duration_ms=10,
+                    stdout_path="logs/unit.stdout.log",
+                    stderr_path="logs/unit.stderr.log",
+                    failure_fingerprint="abc",
+                )
+            ],
+            required_gates_passed=False,
+            next_action="repair",
+        ),
+    )
+    repo.write("05_gate_report.yaml", gate_report)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = repair_failure_node(
+        state,
+        context=context,
+        builder_handle=WorkerHandle(worker_id="worker_T001", thread_id="thread_builder"),
+        gate_report=gate_report,
+        repair=RepairService(tmp_path, config, FakeCodingBackend(), writer),
+        target_task_id="T001",
+    )
+
+    assert patch == {
+        "current_stage": "run_quality_gates",
+        "repair_attempts": 1,
+        "artifacts": {
+            "repair_request_R001": "repairs/R001/repair_request.yaml",
+            "repair_result_R001": "repairs/R001/repair_result.yaml",
+        },
+    }
+    assert repo.read("repairs/R001/repair_request.yaml", ArtifactType.REPAIR_REQUEST)
+    assert repo.read("repairs/R001/repair_result.yaml", ArtifactType.REPAIR_RESULT)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.repair_attempts == 1
+    assert saved.current_stage == "run_quality_gates"
+    assert saved.artifacts["repair_result_R001"] == "repairs/R001/repair_result.yaml"
