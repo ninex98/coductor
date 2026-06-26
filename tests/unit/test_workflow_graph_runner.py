@@ -14,7 +14,7 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
-from coductor.workflow.nodes import inspect, intake, specify
+from coductor.workflow.nodes import inspect, intake, plan, specify
 from coductor.workflow.state import WorkflowState
 
 
@@ -156,6 +156,59 @@ def test_graph_runner_uses_draft_spec_node_for_specification(
         return original(state, context=context, goal=goal, snapshot=snapshot)
 
     monkeypatch.setattr(specify, "draft_spec_node", recording_draft_spec_node)
+
+    runner.run_front_half(state, requested_mode=ExecutionMode.AUTO)
+
+    assert calls == [run_id]
+
+
+def test_graph_runner_uses_create_execution_plan_node_for_plan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=WorkflowArtifactWriter(tmp_path, config),
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+    calls: list[str] = []
+    original = plan.create_execution_plan_node
+
+    def recording_create_execution_plan_node(
+        state,
+        *,
+        context=None,
+        spec=None,
+        snapshot=None,
+        requested_mode=None,
+    ):
+        calls.append(state.run_id)
+        return original(
+            state,
+            context=context,
+            spec=spec,
+            snapshot=snapshot,
+            requested_mode=requested_mode,
+        )
+
+    monkeypatch.setattr(
+        plan,
+        "create_execution_plan_node",
+        recording_create_execution_plan_node,
+    )
 
     runner.run_front_half(state, requested_mode=ExecutionMode.AUTO)
 

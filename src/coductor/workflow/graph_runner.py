@@ -8,6 +8,7 @@ from typing import Any
 from coductor.artifacts.models import (
     ArtifactEnvelope,
     EvidenceBundleData,
+    ExecutionPlanData,
     GateReportData,
     GoalData,
     RepositorySnapshotData,
@@ -22,7 +23,7 @@ from coductor.services.task_execution_service import ExecutedTask, TaskExecution
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
-from coductor.workflow.nodes import inspect, intake, specify
+from coductor.workflow.nodes import inspect, intake, plan, specify
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -85,17 +86,20 @@ class WorkflowGraphRunner:
             self.repo.read("02_spec.yaml", ArtifactType.SPECIFICATION).model_dump(mode="json")
         )
 
-        plan = self.artifacts.write_plan(
-            self.repo,
-            state.run_id,
-            spec,
-            snapshot,
-            requested_mode,
+        plan.create_execution_plan_node(
+            state,
+            context=context,
+            spec=spec,
+            snapshot=snapshot,
+            requested_mode=requested_mode,
         )
-        state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
-        state.current_stage = "create_execution_plan"
-        self._save(state)
-        return goal, snapshot, spec, plan, state
+        execution_plan = ArtifactEnvelope[ExecutionPlanData].model_validate(
+            self.repo.read(
+                "03_execution_plan.yaml",
+                ArtifactType.EXECUTION_PLAN,
+            ).model_dump(mode="json")
+        )
+        return goal, snapshot, spec, execution_plan, state
 
     def run_task_execution(
         self,
