@@ -52,7 +52,7 @@ def test_fake_backend_run_repairs_after_initial_gate_failure(tmp_path: Path) -> 
     assert backend.review_thread_ids != backend.builder_thread_ids
 
 
-def test_run_service_uses_workflow_graph_runner_for_repair(
+def test_run_service_uses_contextual_graph_for_repair(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -62,29 +62,10 @@ def test_run_service_uses_workflow_graph_runner_for_repair(
         f"p=Path({str(marker)!r}); "
         'sys.exit(0 if p.exists() else 1)"'
     )
-    calls: list[int] = []
-    original = WorkflowGraphRunner.run_repair
+    def fail_runner_repair(self, state, *, builder_handle, gate_report, repair, target_task_id):
+        raise AssertionError("RunService should use contextual graph for repair")
 
-    def recording_run_repair(
-        self,
-        state,
-        *,
-        builder_handle,
-        gate_report,
-        repair,
-        target_task_id,
-    ):
-        calls.append(state.repair_attempts)
-        return original(
-            self,
-            state,
-            builder_handle=builder_handle,
-            gate_report=gate_report,
-            repair=repair,
-            target_task_id=target_task_id,
-        )
-
-    monkeypatch.setattr(WorkflowGraphRunner, "run_repair", recording_run_repair)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_repair", fail_runner_repair)
     backend = FakeCodingBackend(
         repair_side_effect=lambda: marker.write_text("fixed", encoding="utf-8")
     )
@@ -95,7 +76,7 @@ def test_run_service_uses_workflow_graph_runner_for_repair(
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert result.repair_attempts == 1
-    assert calls == [0]
+    assert (Path(result.run_dir) / "repairs/R001/repair_result.yaml").exists()
 
 
 def test_run_stops_at_max_repair_attempts(tmp_path: Path) -> None:
@@ -261,24 +242,21 @@ def test_run_service_save_checkpoint_updates_langgraph_sqlite_state(
     assert snapshot.values["artifacts"]["02_spec"] == "02_spec.yaml"
 
 
-def test_run_service_uses_workflow_graph_runner_for_front_half(
+def test_run_service_uses_contextual_graph_for_front_half(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     config = _config(f"{sys.executable} -c 'print(1)'")
-    calls: list[str] = []
-    original = WorkflowGraphRunner.run_front_half
 
-    def recording_run_front_half(self, state, *, requested_mode):
-        calls.append(state.run_id)
-        return original(self, state, requested_mode=requested_mode)
+    def fail_runner_front_half(self, state, *, requested_mode):
+        raise AssertionError("RunService should use contextual graph for front half")
 
-    monkeypatch.setattr(WorkflowGraphRunner, "run_front_half", recording_run_front_half)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_front_half", fail_runner_front_half)
 
     result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
-    assert calls == [result.run_id]
+    assert (Path(result.run_dir) / "03_execution_plan.yaml").exists()
 
 
 def test_run_service_uses_contextual_graph_for_no_gate_happy_path(
@@ -300,48 +278,67 @@ def test_run_service_uses_contextual_graph_for_no_gate_happy_path(
     assert (Path(result.run_dir) / "07_evidence.yaml").exists()
 
 
-def test_run_service_reuses_one_workflow_graph_runner_per_run(
+def test_run_service_uses_contextual_graph_for_gate_repair_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    marker = tmp_path / "repair-marker"
+    command = (
+        f'{sys.executable} -c "from pathlib import Path; import sys; '
+        f"p=Path({str(marker)!r}); "
+        'sys.exit(0 if p.exists() else 1)"'
+    )
+    backend = FakeCodingBackend(
+        repair_side_effect=lambda: marker.write_text("fixed", encoding="utf-8")
+    )
+
+    def fail_runner_repair(self, state, *, builder_handle, gate_report, repair, target_task_id):
+        raise AssertionError("RunService should use contextual graph for gate repair path")
+
+    monkeypatch.setattr(WorkflowGraphRunner, "run_repair", fail_runner_repair)
+
+    result = RunService(tmp_path, _config(command), backend=backend).run("修复失败测试")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result.repair_attempts == 1
+    assert (Path(result.run_dir) / "repairs/R001/repair_result.yaml").exists()
+
+
+def test_run_service_does_not_create_workflow_graph_runner_for_default_run(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     config = _config(f"{sys.executable} -c 'print(1)'")
-    created: list[object] = []
-    original_init = WorkflowGraphRunner.__init__
 
-    def recording_init(self, *args, **kwargs):
-        created.append(self)
-        original_init(self, *args, **kwargs)
+    def fail_runner_init(self, *args, **kwargs):
+        raise AssertionError("RunService should use contextual graph")
 
-    monkeypatch.setattr(WorkflowGraphRunner, "__init__", recording_init)
+    monkeypatch.setattr(WorkflowGraphRunner, "__init__", fail_runner_init)
 
     result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
-    assert len(created) == 1
 
 
-def test_run_service_uses_workflow_graph_runner_for_task_execution(
+def test_run_service_uses_contextual_graph_for_task_execution(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     config = _config(f"{sys.executable} -c 'print(1)'")
-    calls: list[str] = []
-    original = WorkflowGraphRunner.run_task_execution
 
-    def recording_run_task_execution(self, state, *, plan, tasks, on_dispatch=None):
-        calls.append(state.run_id)
-        return original(self, state, plan=plan, tasks=tasks, on_dispatch=on_dispatch)
+    def fail_runner_task_execution(self, state, *, plan, tasks, on_dispatch=None):
+        raise AssertionError("RunService should use contextual graph for tasks")
 
     monkeypatch.setattr(
         WorkflowGraphRunner,
         "run_task_execution",
-        recording_run_task_execution,
+        fail_runner_task_execution,
     )
 
     result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
-    assert calls == [result.run_id]
+    assert (Path(result.run_dir) / "tasks/T001/worker_result.yaml").exists()
 
 
 def test_run_service_reports_dispatch_progress_from_task_runner(tmp_path: Path) -> None:
@@ -361,16 +358,13 @@ def test_run_service_reports_dispatch_progress_from_task_runner(tmp_path: Path) 
     assert ("dispatch_tasks", "dispatch T001") in events
 
 
-def test_run_service_uses_workflow_graph_runner_for_verification(
+def test_run_service_uses_contextual_graph_for_verification(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     config = _config(f"{sys.executable} -c 'print(1)'")
-    calls: list[str] = []
-    original_integration = WorkflowGraphRunner.run_integration
-    original_gates = WorkflowGraphRunner.run_quality_gates
 
-    def recording_run_integration(
+    def fail_runner_integration(
         self,
         state,
         *,
@@ -378,49 +372,38 @@ def test_run_service_uses_workflow_graph_runner_for_verification(
         completed_task_ids,
         verification,
     ):
-        calls.append("integration")
-        return original_integration(
-            self,
-            state,
-            plan=plan,
-            completed_task_ids=completed_task_ids,
-            verification=verification,
-        )
+        raise AssertionError("RunService should use contextual graph for integration")
 
-    def recording_run_quality_gates(self, state, *, verification):
-        calls.append("gates")
-        return original_gates(self, state, verification=verification)
+    def fail_runner_quality_gates(self, state, *, verification):
+        raise AssertionError("RunService should use contextual graph for gates")
 
-    monkeypatch.setattr(WorkflowGraphRunner, "run_integration", recording_run_integration)
-    monkeypatch.setattr(WorkflowGraphRunner, "run_quality_gates", recording_run_quality_gates)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_integration", fail_runner_integration)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_quality_gates", fail_runner_quality_gates)
 
     result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
-    assert calls == ["integration", "gates"]
+    assert (Path(result.run_dir) / "04_integration.yaml").exists()
+    assert (Path(result.run_dir) / "05_gate_report.yaml").exists()
 
 
-def test_run_service_uses_workflow_graph_runner_for_delivery(
+def test_run_service_uses_contextual_graph_for_delivery(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     config = _config(f"{sys.executable} -c 'print(1)'")
-    calls: list[str] = []
-    original_review = WorkflowGraphRunner.run_review
-    original_evidence = WorkflowGraphRunner.run_evidence
 
-    def recording_run_review(self, state, *, review):
-        calls.append("review")
-        return original_review(self, state, review=review)
+    def fail_runner_review(self, state, *, review):
+        raise AssertionError("RunService should use contextual graph for review")
 
-    def recording_run_evidence(self, state, *, evidence):
-        calls.append("evidence")
-        return original_evidence(self, state, evidence=evidence)
+    def fail_runner_evidence(self, state, *, evidence):
+        raise AssertionError("RunService should use contextual graph for evidence")
 
-    monkeypatch.setattr(WorkflowGraphRunner, "run_review", recording_run_review)
-    monkeypatch.setattr(WorkflowGraphRunner, "run_evidence", recording_run_evidence)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_review", fail_runner_review)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_evidence", fail_runner_evidence)
 
     result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
-    assert calls == ["review", "evidence"]
+    assert (Path(result.run_dir) / "06_review.yaml").exists()
+    assert (Path(result.run_dir) / "07_evidence.yaml").exists()

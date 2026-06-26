@@ -9,7 +9,7 @@ from coductor.artifacts.models import (
     RepositorySnapshotData,
     SpecificationData,
 )
-from coductor.domain.enums import ExecutionMode
+from coductor.domain.enums import ExecutionMode, RunStatus
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -25,7 +25,7 @@ def create_execution_plan_node(
     if context is not None:
         if spec is None or snapshot is None:
             raise ValueError("create_execution_plan_node requires spec and snapshot artifacts")
-        context.artifacts.write_plan(
+        plan = context.artifacts.write_plan(
             context.repo,
             state.run_id,
             spec,
@@ -34,11 +34,20 @@ def create_execution_plan_node(
         )
         state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
         state.current_stage = "create_execution_plan"
+        if not plan.data.validation.valid:
+            state.status = RunStatus.HUMAN_REQUIRED
+            state.current_stage = "human_required"
+            state.last_error = "plan validation failed"
         context.save(state)
-        return {
+        patch: dict[str, Any] = {
             "current_stage": "create_execution_plan",
             "artifacts": {"03_execution_plan": "03_execution_plan.yaml"},
         }
+        if state.status == RunStatus.HUMAN_REQUIRED:
+            patch["current_stage"] = state.current_stage
+            patch["status"] = state.status
+            patch["last_error"] = state.last_error
+        return patch
     return {
         "current_stage": "create_execution_plan",
         "artifacts": {"03_execution_plan": "03_execution_plan.yaml"},

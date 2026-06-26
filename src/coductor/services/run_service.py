@@ -11,6 +11,7 @@ from coductor.artifacts.models import (
     ArtifactInput,
     ArtifactMetadata,
     EvidenceBundleData,
+    ExecutionPlanData,
     GateReportData,
     GoalData,
     Producer,
@@ -38,7 +39,6 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph import build_workflow_graph
-from coductor.workflow.graph_runner import WorkflowGraphRunner
 from coductor.workflow.langgraph_checkpoint import LangGraphCheckpointStore
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
@@ -93,179 +93,15 @@ class RunService:
             raw_goal=raw_goal,
             requested_mode=str(requested_mode),
             run_dir=run_dir.as_posix(),
+            max_repair_attempts=self.config.workflow.max_repair_attempts,
         )
-        if not self.config.quality_gates:
-            return self._run_contextual_graph_happy_path(
-                state,
-                repo=repo,
-                run_dir=run_dir,
-            )
-        runner = WorkflowGraphRunner(
+        return self._run_contextual_graph(
+            state,
             repo=repo,
-            artifacts=self.artifacts,
-            checkpoints=self.checkpoints,
-        )
-        self.save_checkpoint(state)
-        self._event(run_id, "collect_goal", "accepted user goal")
-
-        self._event(run_id, "inspect_repository", "capturing repository snapshot")
-        self._event(run_id, "draft_spec", "writing specification artifact")
-        self._event(run_id, "create_execution_plan", "choosing execution strategy")
-        goal, _snapshot, _spec, plan, state = runner.run_front_half(
-            state,
-            requested_mode=requested_mode,
-        )
-        if not plan.data.validation.valid:
-            state.status = RunStatus.HUMAN_REQUIRED
-            state.current_stage = "human_required"
-            state.last_error = "plan validation failed"
-            self._store_run(state, run_dir)
-            self.save_checkpoint(state)
-            first_error = plan.data.validation.errors[0]
-            return RunResult(
-                run_id=run_id,
-                status=state.status,
-                run_dir=run_dir.as_posix(),
-                repair_attempts=state.repair_attempts,
-                message=f"plan validation failed: {first_error}",
-            )
-        state.current_stage = "materialize_tasks"
-        self.save_checkpoint(state)
-        self._event(run_id, "materialize_tasks", "preparing worker tasks")
-        executed, state = runner.run_task_execution(
-            state,
-            plan=plan,
-            tasks=self.task_execution,
-            on_dispatch=lambda task_id, _handle: self._event(
-                run_id,
-                "dispatch_tasks",
-                f"dispatch {task_id}",
-            ),
-        )
-        executed_tasks = [(item.task_id, item.handle) for item in executed]
-        if not executed_tasks:
-            state.status = RunStatus.HUMAN_REQUIRED
-            state.current_stage = "human_required"
-            self._store_run(state, run_dir)
-            self.save_checkpoint(state)
-            return RunResult(
-                run_id=run_id,
-                status=state.status,
-                run_dir=run_dir.as_posix(),
-                repair_attempts=state.repair_attempts,
-                message="执行计划没有可运行任务",
-            )
-        failed_task_ids = self.task_execution.failed_task_ids(
-            repo,
-            [task_id for task_id, _handle in executed_tasks],
-        )
-        if failed_task_ids:
-            state.status = RunStatus.HUMAN_REQUIRED
-            state.current_stage = "human_required"
-            state.last_error = f"worker failed: {', '.join(failed_task_ids)}"
-            self._store_run(state, run_dir)
-            self.save_checkpoint(state)
-            return RunResult(
-                run_id=run_id,
-                status=state.status,
-                run_dir=run_dir.as_posix(),
-                repair_attempts=state.repair_attempts,
-                message=state.last_error,
-            )
-        worker_handle = executed_tasks[-1][1]
-        repair_target_task_id = executed_tasks[-1][0]
-        completed_task_ids = [task_id for task_id, _handle in executed_tasks]
-        state.current_stage = "integrate_changes"
-        self.save_checkpoint(state)
-        self._event(run_id, "integrate_changes", "recording integration artifact")
-        state = runner.run_integration(
-            state,
-            plan=plan,
-            completed_task_ids=completed_task_ids,
-            verification=self.verification,
-        )
-        self._event(run_id, "run_quality_gates", "running configured quality gates")
-
-        gate_report: ArtifactEnvelope[GateReportData] | None = None
-        last_fingerprint: str | None = None
-        repeated_fingerprints = 0
-        while True:
-            gate_report, state = runner.run_quality_gates(
-                state,
-                verification=self.verification,
-            )
-            if gate_report.data.required_gates_passed:
-                break
-            fingerprints = [
-                gate.failure_fingerprint
-                for gate in gate_report.data.gates
-                if gate.failure_fingerprint
-            ]
-            current_fingerprint = fingerprints[0] if fingerprints else None
-            repeated_fingerprints = (
-                repeated_fingerprints + 1 if current_fingerprint == last_fingerprint else 1
-            )
-            last_fingerprint = current_fingerprint
-            if (
-                state.repair_attempts >= self.config.workflow.max_repair_attempts
-                or repeated_fingerprints >= 2
-            ):
-                gate_report.data.next_action = "human_required"
-                repo.write("05_gate_report.yaml", gate_report)
-                state.status = RunStatus.HUMAN_REQUIRED
-                state.current_stage = "human_required"
-                self._store_run(state, run_dir)
-                self.save_checkpoint(state)
-                return RunResult(
-                    run_id=run_id,
-                    status=state.status,
-                    run_dir=run_dir.as_posix(),
-                    repair_attempts=state.repair_attempts,
-                    message="质量门失败且达到停止规则",
-                )
-            self._event(run_id, "repair_failure", f"repair attempt {state.repair_attempts + 1}")
-            state = runner.run_repair(
-                state,
-                builder_handle=worker_handle,
-                gate_report=gate_report,
-                repair=self.repairs,
-                target_task_id=repair_target_task_id,
-            )
-
-        self._event(run_id, "run_independent_review", "reviewing worker result")
-        review, state = runner.run_review(
-            state,
-            review=lambda: self._review(repo, run_id, gate_report, completed_task_ids),
-        )
-        self._event(run_id, "prepare_evidence", "writing evidence bundle")
-        _evidence, state = runner.run_evidence(
-            state,
-            evidence=lambda: self._evidence(
-                repo,
-                run_id,
-                goal,
-                gate_report,
-                review,
-                plan.data.strategy,
-                completed_task_ids,
-            ),
-        )
-        self._store_run(state, run_dir)
-        self.save_checkpoint(state)
-        message = (
-            "run completed"
-            if state.status == RunStatus.READY_FOR_HUMAN_REVIEW
-            else "evidence requires human attention"
-        )
-        return RunResult(
-            run_id=run_id,
-            status=state.status,
-            run_dir=run_dir.as_posix(),
-            repair_attempts=state.repair_attempts,
-            message=message,
+            run_dir=run_dir,
         )
 
-    def _run_contextual_graph_happy_path(
+    def _run_contextual_graph(
         self,
         state: WorkflowState,
         *,
@@ -279,19 +115,7 @@ class RunService:
         self._event(run_id, "draft_spec", "writing specification artifact")
         self._event(run_id, "create_execution_plan", "choosing execution strategy")
         self._event(run_id, "materialize_tasks", "preparing worker tasks")
-        context = WorkflowRuntimeContext(
-            repo=repo,
-            artifacts=self.artifacts,
-            checkpoints=self.checkpoints,
-            task_execution=self.task_execution,
-            verification=self.verification,
-            review_delivery=self.review_delivery,
-            on_dispatch=lambda task_id: self._event(
-                run_id,
-                "dispatch_tasks",
-                f"dispatch {task_id}",
-            ),
-        )
+        context = self._build_runtime_context(repo, run_id)
         graph_result = build_workflow_graph(context=context).compile().invoke(state)
         final_state = WorkflowState.model_validate(graph_result)
         self._store_run(final_state, run_dir)
@@ -299,7 +123,7 @@ class RunService:
         message = (
             "run completed"
             if final_state.status == RunStatus.READY_FOR_HUMAN_REVIEW
-            else final_state.last_error or "evidence requires human attention"
+            else self._message_for_human_required(repo, final_state)
         )
         return RunResult(
             run_id=run_id,
@@ -308,6 +132,68 @@ class RunService:
             repair_attempts=final_state.repair_attempts,
             message=message,
         )
+
+    def _build_runtime_context(
+        self,
+        repo: ArtifactRepository,
+        run_id: str,
+    ) -> WorkflowRuntimeContext:
+        def review_callback(
+            gate_report: ArtifactEnvelope[GateReportData],
+            completed_task_ids: list[str],
+            _state: WorkflowState,
+        ) -> ArtifactEnvelope[ReviewReportData]:
+            return self._review(repo, run_id, gate_report, completed_task_ids)
+
+        def evidence_callback(
+            goal: ArtifactEnvelope[GoalData],
+            gate_report: ArtifactEnvelope[GateReportData],
+            review: ArtifactEnvelope[ReviewReportData],
+            strategy: ExecutionStrategy,
+            completed_task_ids: list[str],
+            _state: WorkflowState,
+        ) -> ArtifactEnvelope[EvidenceBundleData]:
+            return self._evidence(
+                repo,
+                run_id,
+                goal,
+                gate_report,
+                review,
+                strategy,
+                completed_task_ids,
+            )
+
+        return WorkflowRuntimeContext(
+            repo=repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+            task_execution=self.task_execution,
+            verification=self.verification,
+            review_delivery=self.review_delivery,
+            repair=self.repairs,
+            on_dispatch=lambda task_id: self._event(
+                run_id,
+                "dispatch_tasks",
+                f"dispatch {task_id}",
+            ),
+            review_callback=review_callback,
+            evidence_callback=evidence_callback,
+        )
+
+    def _message_for_human_required(
+        self,
+        repo: ArtifactRepository,
+        state: WorkflowState,
+    ) -> str:
+        if state.last_error == "plan validation failed":
+            plan = ArtifactEnvelope[ExecutionPlanData].model_validate(
+                repo.read("03_execution_plan.yaml", ArtifactType.EXECUTION_PLAN).model_dump(
+                    mode="json"
+                )
+            )
+            first_error = plan.data.validation.errors[0]
+            return f"plan validation failed: {first_error}"
+        return state.last_error or "evidence requires human attention"
 
     def save_checkpoint(self, state: WorkflowState) -> None:
         self.checkpoints.save(state, utc_now())

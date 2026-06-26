@@ -5,8 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from coductor.artifacts.models import (
+    ArtifactEnvelope,
+    EvidenceBundleData,
+    GateReportData,
+    GoalData,
+    ReviewReportData,
+)
 from coductor.artifacts.repository import ArtifactRepository
-from coductor.domain.enums import ExecutionMode
+from coductor.domain.enums import ExecutionMode, ExecutionStrategy
+from coductor.services.repair_service import RepairService
 from coductor.services.review_delivery_service import ReviewDeliveryService
 from coductor.services.task_execution_service import TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
@@ -23,7 +31,29 @@ class WorkflowRuntimeContext:
     task_execution: TaskExecutionService | None = None
     verification: WorkflowVerificationService | None = None
     review_delivery: ReviewDeliveryService | None = None
+    repair: RepairService | None = None
     on_dispatch: Callable[[str], None] | None = None
+    review_callback: (
+        Callable[
+            [ArtifactEnvelope[GateReportData], list[str], WorkflowState],
+            ArtifactEnvelope[ReviewReportData],
+        ]
+        | None
+    ) = None
+    evidence_callback: (
+        Callable[
+            [
+                ArtifactEnvelope[GoalData],
+                ArtifactEnvelope[GateReportData],
+                ArtifactEnvelope[ReviewReportData],
+                ExecutionStrategy,
+                list[str],
+                WorkflowState,
+            ],
+            ArtifactEnvelope[EvidenceBundleData],
+        ]
+        | None
+    ) = None
 
     def requested_mode(self, state: WorkflowState) -> ExecutionMode:
         return ExecutionMode(state.requested_mode)

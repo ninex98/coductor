@@ -15,8 +15,10 @@ from coductor.artifacts.models import (
     RepositorySnapshotData,
     ReviewReportData,
     SpecificationData,
+    WorkerResultData,
 )
-from coductor.domain.enums import ArtifactType, ExecutionMode, ExecutionStrategy
+from coductor.backends.base import WorkerHandle
+from coductor.domain.enums import ArtifactType, ExecutionMode, ExecutionStrategy, RunStatus
 from coductor.workflow.nodes.deliver import prepare_evidence_node
 from coductor.workflow.nodes.execute import (
     dispatch_next_stage,
@@ -66,6 +68,8 @@ def _stage_node(stage: str) -> Callable[[WorkflowState], NodePatch]:
 
 
 def _route_after_gates(state: WorkflowState) -> str:
+    if state.status == RunStatus.HUMAN_REQUIRED:
+        return END
     if state.gate_passed:
         return "run_independent_review"
     if state.repair_attempts < state.max_repair_attempts:
@@ -73,8 +77,13 @@ def _route_after_gates(state: WorkflowState) -> str:
     return "prepare_evidence"
 
 
+def _route_after_plan_validation(state: WorkflowState) -> str:
+    return END if state.status == RunStatus.HUMAN_REQUIRED else "materialize_tasks"
+
+
 def _route_after_review(state: WorkflowState) -> str:
-    return "prepare_evidence" if state.review_passed else "repair_failure"
+    del state
+    return "prepare_evidence"
 
 
 def build_workflow_graph(
@@ -144,7 +153,15 @@ def build_workflow_graph(
             else run_quality_gates_node
         ),
     )
-    _add_node(graph, "repair_failure", repair_failure_node)
+    _add_node(
+        graph,
+        "repair_failure",
+        (
+            _contextual_repair_node(context)
+            if context is not None and context.repair is not None
+            else repair_failure_node
+        ),
+    )
     _add_node(
         graph,
         "run_independent_review",
@@ -170,7 +187,7 @@ def build_workflow_graph(
     graph.add_edge("draft_spec", "validate_spec")
     graph.add_edge("validate_spec", "create_execution_plan")
     graph.add_edge("create_execution_plan", "validate_execution_plan")
-    graph.add_edge("validate_execution_plan", "materialize_tasks")
+    graph.add_conditional_edges("validate_execution_plan", _route_after_plan_validation)
     graph.add_edge("materialize_tasks", "dispatch_tasks")
     graph.add_conditional_edges("dispatch_tasks", dispatch_next_stage)
     graph.add_edge("integrate_changes", "run_quality_gates")
@@ -293,6 +310,44 @@ def _contextual_quality_gates_node(
     return node
 
 
+def _contextual_repair_node(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        repair = context.repair
+        if repair is None:
+            raise ValueError("repair_failure node requires repair service")
+        completed_task_ids = _completed_task_ids(state)
+        if not completed_task_ids:
+            raise ValueError("repair_failure node requires a completed worker result")
+        target_task_id = completed_task_ids[-1]
+        worker_result = ArtifactEnvelope[WorkerResultData].model_validate(
+            context.repo.read(
+                f"tasks/{target_task_id}/worker_result.yaml",
+                ArtifactType.WORKER_RESULT,
+            ).model_dump(mode="json")
+        )
+        gate_report = ArtifactEnvelope[GateReportData].model_validate(
+            context.repo.read(
+                "05_gate_report.yaml",
+                ArtifactType.GATE_REPORT,
+            ).model_dump(mode="json")
+        )
+        return repair_failure_node(
+            state,
+            context=context,
+            builder_handle=WorkerHandle(
+                worker_id=worker_result.data.worker_id,
+                thread_id=worker_result.data.thread_id,
+            ),
+            gate_report=gate_report,
+            repair=repair,
+            target_task_id=target_task_id,
+        )
+
+    return node
+
+
 def _contextual_review_node(
     context: WorkflowRuntimeContext,
 ) -> Callable[[WorkflowState], NodePatch]:
@@ -309,11 +364,19 @@ def _contextual_review_node(
         return run_independent_review_node(
             state,
             context=context,
-            review=lambda: review_delivery.review(
-                context.repo,
-                state.run_id,
-                gate_report,
-                _completed_task_ids(state),
+            review=lambda: (
+                context.review_callback(
+                    gate_report,
+                    _completed_task_ids(state),
+                    state,
+                )
+                if context.review_callback is not None
+                else review_delivery.review(
+                    context.repo,
+                    state.run_id,
+                    gate_report,
+                    _completed_task_ids(state),
+                )
             ),
         )
 
@@ -346,14 +409,25 @@ def _contextual_evidence_node(
         return prepare_evidence_node(
             state,
             context=context,
-            evidence=lambda: review_delivery.evidence(
-                context.repo,
-                state.run_id,
-                goal,
-                gate_report,
-                review,
-                ExecutionStrategy(plan.data.strategy),
-                _completed_task_ids(state),
+            evidence=lambda: (
+                context.evidence_callback(
+                    goal,
+                    gate_report,
+                    review,
+                    ExecutionStrategy(plan.data.strategy),
+                    _completed_task_ids(state),
+                    state,
+                )
+                if context.evidence_callback is not None
+                else review_delivery.evidence(
+                    context.repo,
+                    state.run_id,
+                    goal,
+                    gate_report,
+                    review,
+                    ExecutionStrategy(plan.data.strategy),
+                    _completed_task_ids(state),
+                )
             ),
         )
 

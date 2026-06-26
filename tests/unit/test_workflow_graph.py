@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import sys
+
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
-from coductor.config.models import CoductorConfig
+from coductor.config.models import CoductorConfig, QualityGateConfig
 from coductor.domain.enums import RunStatus, WorkerStatus
+from coductor.services.repair_service import RepairService
 from coductor.services.review_delivery_service import ReviewDeliveryService
 from coductor.services.task_execution_service import TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
@@ -241,3 +244,58 @@ def test_contextual_workflow_graph_stops_after_worker_failure(tmp_path) -> None:
     assert (run_dir / "tasks/T001/worker_result.yaml").exists()
     assert not (run_dir / "04_integration.yaml").exists()
     assert not (run_dir / "07_evidence.yaml").exists()
+
+
+def test_contextual_workflow_graph_repairs_failed_gate(tmp_path) -> None:
+    run_id = "run_contextual_graph_repair_000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    marker = tmp_path / "repair-marker"
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.workflow.max_repair_attempts = 2
+    config.quality_gates = [
+        QualityGateConfig(
+            id="unit_tests",
+            command=(
+                f'{sys.executable} -c "from pathlib import Path; import sys; '
+                f"p=Path({str(marker)!r}); "
+                'sys.exit(0 if p.exists() else 1)"'
+            ),
+            required=True,
+            timeout_seconds=30,
+        )
+    ]
+    backend = FakeCodingBackend(
+        repair_side_effect=lambda: marker.write_text("fixed", encoding="utf-8")
+    )
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+        task_execution=TaskExecutionService(tmp_path, config, backend, writer),
+        verification=WorkflowVerificationService(tmp_path, config, writer),
+        review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
+        repair=RepairService(tmp_path, config, backend, writer),
+    )
+    compiled = build_workflow_graph(context=context).compile()
+
+    result = compiled.invoke(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            raw_goal="修复失败测试",
+            requested_mode="solo",
+            run_dir=run_dir.as_posix(),
+            max_repair_attempts=config.workflow.max_repair_attempts,
+        )
+    )
+
+    assert result["status"] == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result["repair_attempts"] == 1
+    assert (run_dir / "repairs/R001/repair_request.yaml").exists()
+    assert (run_dir / "repairs/R001/repair_result.yaml").exists()
+    assert (run_dir / "07_evidence.yaml").exists()
