@@ -200,3 +200,31 @@ def test_run_service_uses_workflow_graph_runner_for_verification(
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert calls == ["integration", "gates"]
+
+
+def test_run_service_uses_workflow_graph_runner_for_delivery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    calls: list[str] = []
+    original_review = WorkflowGraphRunner.run_review
+    original_evidence = WorkflowGraphRunner.run_evidence
+
+    def recording_run_review(self, state, *, review):
+        calls.append("review")
+        return original_review(self, state, review=review)
+
+    def recording_run_evidence(self, state, *, evidence):
+        calls.append("evidence")
+        return original_evidence(self, state, evidence=evidence)
+
+    monkeypatch.setattr(WorkflowGraphRunner, "run_review", recording_run_review)
+    monkeypatch.setattr(WorkflowGraphRunner, "run_evidence", recording_run_evidence)
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert calls == ["review", "evidence"]

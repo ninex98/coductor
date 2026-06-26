@@ -233,28 +233,24 @@ class RunService:
             state.current_stage = "run_quality_gates"
             self.save_checkpoint(state)
 
-        review = self._review(repo, run_id, gate_report, completed_task_ids)
-        state.artifacts["06_review"] = "06_review.yaml"
-        state.current_stage = "run_independent_review"
-        self.save_checkpoint(state)
         self._event(run_id, "run_independent_review", "reviewing worker result")
-        evidence = self._evidence(
-            repo,
-            run_id,
-            goal,
-            gate_report,
-            review,
-            plan.data.strategy,
-            completed_task_ids,
+        review, state = runner.run_review(
+            state,
+            review=lambda: self._review(repo, run_id, gate_report, completed_task_ids),
         )
-        state.artifacts["07_evidence"] = "07_evidence.yaml"
         self._event(run_id, "prepare_evidence", "writing evidence bundle")
-        state.status = (
-            RunStatus.READY_FOR_HUMAN_REVIEW
-            if evidence.data.final_status == "ready_for_human_review"
-            else RunStatus.HUMAN_REQUIRED
+        _evidence, state = runner.run_evidence(
+            state,
+            evidence=lambda: self._evidence(
+                repo,
+                run_id,
+                goal,
+                gate_report,
+                review,
+                plan.data.strategy,
+                completed_task_ids,
+            ),
         )
-        state.current_stage = "prepare_evidence"
         self._store_run(state, run_dir)
         self.save_checkpoint(state)
         message = (
