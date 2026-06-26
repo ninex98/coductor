@@ -118,6 +118,28 @@ def test_run_service_uses_workflow_graph_runner_for_front_half(
     assert calls == [result.run_id]
 
 
+def test_run_service_reuses_one_workflow_graph_runner_per_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    created: list[object] = []
+    original_init = WorkflowGraphRunner.__init__
+
+    def recording_init(self, *args, **kwargs):
+        created.append(self)
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorkflowGraphRunner, "__init__", recording_init)
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert len(created) == 1
+
+
 def test_run_service_uses_workflow_graph_runner_for_task_execution(
     tmp_path: Path,
     monkeypatch,

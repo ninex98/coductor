@@ -90,17 +90,21 @@ class RunService:
             requested_mode=str(requested_mode),
             run_dir=run_dir.as_posix(),
         )
+        runner = WorkflowGraphRunner(
+            repo=repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+        )
         self.save_checkpoint(state)
         self._event(run_id, "collect_goal", "accepted user goal")
 
         self._event(run_id, "inspect_repository", "capturing repository snapshot")
         self._event(run_id, "draft_spec", "writing specification artifact")
         self._event(run_id, "create_execution_plan", "choosing execution strategy")
-        goal, _snapshot, _spec, plan, state = WorkflowGraphRunner(
-            repo=repo,
-            artifacts=self.artifacts,
-            checkpoints=self.checkpoints,
-        ).run_front_half(state, requested_mode=requested_mode)
+        goal, _snapshot, _spec, plan, state = runner.run_front_half(
+            state,
+            requested_mode=requested_mode,
+        )
         if not plan.data.validation.valid:
             state.status = RunStatus.HUMAN_REQUIRED
             state.current_stage = "human_required"
@@ -118,11 +122,7 @@ class RunService:
         state.current_stage = "materialize_tasks"
         self.save_checkpoint(state)
         self._event(run_id, "materialize_tasks", "preparing worker tasks")
-        executed, state = WorkflowGraphRunner(
-            repo=repo,
-            artifacts=self.artifacts,
-            checkpoints=self.checkpoints,
-        ).run_task_execution(
+        executed, state = runner.run_task_execution(
             state,
             plan=plan,
             tasks=self.task_execution,
@@ -168,11 +168,6 @@ class RunService:
         state.current_stage = "integrate_changes"
         self.save_checkpoint(state)
         self._event(run_id, "integrate_changes", "recording integration artifact")
-        runner = WorkflowGraphRunner(
-            repo=repo,
-            artifacts=self.artifacts,
-            checkpoints=self.checkpoints,
-        )
         state = runner.run_integration(
             state,
             plan=plan,
