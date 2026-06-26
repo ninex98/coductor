@@ -246,6 +246,52 @@ def test_contextual_workflow_graph_stops_after_worker_failure(tmp_path) -> None:
     assert not (run_dir / "07_evidence.yaml").exists()
 
 
+def test_contextual_workflow_graph_stops_pipeline_after_upstream_worker_failure(
+    tmp_path,
+) -> None:
+    run_id = "run_contextual_graph_pipeline_failure_000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    backend = _FailingBackend()
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+        task_execution=TaskExecutionService(tmp_path, config, backend, writer),
+        verification=WorkflowVerificationService(tmp_path, config, writer),
+        review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
+    )
+    compiled = build_workflow_graph(context=context).compile()
+
+    result = compiled.invoke(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            raw_goal="先定义 JSON schema，再基于上游 contract 实现下游功能",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+
+    assert result["status"] == RunStatus.HUMAN_REQUIRED
+    assert result["last_error"] == "worker failed: T001"
+    assert (run_dir / "tasks/T001/worker_result.yaml").exists()
+    assert not (run_dir / "tasks/T002/task.yaml").exists()
+    assert not (run_dir / "tasks/T002/worker_request.yaml").exists()
+    assert not (run_dir / "tasks/T002/worker_result.yaml").exists()
+    assert not (run_dir / "04_integration.yaml").exists()
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.status == RunStatus.HUMAN_REQUIRED
+    assert saved.last_error == "worker failed: T001"
+
+
 def test_contextual_workflow_graph_repairs_failed_gate(tmp_path) -> None:
     run_id = "run_contextual_graph_repair_000001"
     run_dir = tmp_path / ".coductor" / "runs" / run_id
