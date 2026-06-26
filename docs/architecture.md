@@ -31,7 +31,7 @@ collect_goal
   -> prepare_evidence
 ```
 
-当前由 `RunService` 发起这个垂直切片，并通过 SQLite workflow checkpoint 支持 `resume`。`WorkflowGraphRunner` 负责阶段副作用的统一调度、固定 Artifact 路径记录和 checkpoint 写入；各阶段的领域逻辑仍放在 artifact writer、task execution、verification、repair、review delivery 等服务中。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`，`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；后续再把运行恢复切到 LangGraph 原生 SQLite saver。
+当前由 `RunService` 构建 contextual LangGraph 发起这个垂直切片，并通过 SQLite workflow checkpoint 支持 `resume`。各阶段节点只做编排适配：读取上游 YAML Artifact、调用 artifact writer、task execution、verification、repair、review delivery 等服务、记录固定 Artifact 路径并保存 checkpoint。`workflow/graph.py` 负责节点注册、条件路由、按 checkpoint stage 进入图，以及 `compile_workflow_graph` 的 checkpointer 接入；`langgraph-checkpoint-sqlite` 已作为目标依赖声明。
 
 ## Solo First
 

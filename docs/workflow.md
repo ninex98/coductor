@@ -18,8 +18,8 @@ Coductor 的阶段术语固定如下：
 
 当前实现支持 solo 单任务链路，以及由 `auto` 检测明确先后依赖后生成的顺序 pipeline。Pipeline 会按任务依赖拓扑顺序执行，例如先 dispatch `T001`，再 dispatch 依赖它的 `T002`。显式 `parallel` 会先验证 allowed paths 不重叠、contract 不在同批次交接，验证失败进入 `human_required`，验证通过后记录 merged tasks 与 conflicts。失败 Gate 会进入有限修复循环；同一失败指纹重复或达到最大修复次数后进入 `human_required`。
 
-`resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数。恢复前会扫描 run 目录中的 Artifact 链路；若上游 hash、revision 或下游记录的 contract hash 不一致，流程进入 `human_required`，并在 checkpoint 中记录 `stale_artifacts`。链路有效时再继续可重放流程。
+`resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数。恢复前会扫描 run 目录中的 Artifact 链路；若上游 hash、revision 或下游记录的 contract hash 不一致，流程进入 `human_required`，并在 checkpoint 中记录 `stale_artifacts`。链路有效且 checkpoint 中记录的 Artifact 都存在时，contextual LangGraph 会从 checkpoint stage 继续；若 checkpoint 缺少必要 Artifact，则从 `collect_goal` 重放，以保持固定 YAML 事实链完整。
 
-`WorkflowGraphRunner` 已负责当前垂直切片中各阶段副作用的统一调度、固定 Artifact 路径记录和 checkpoint 写入。阶段节点仍保持薄，具体领域逻辑继续放在 artifact writer、task execution、verification、repair、review delivery 等服务中。`workflow/graph.py` 已能构建最小 LangGraph `StateGraph`，`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；后续重点是把现有 runner/checkpoint 语义切到 LangGraph 原生 SQLite saver。
+`RunService` 构建 contextual LangGraph 作为当前主编排器。阶段节点仍保持薄，具体领域逻辑继续放在 artifact writer、task execution、verification、repair、review delivery 等服务中；节点负责读取上游 Artifact、调用服务、记录固定 Artifact 路径和 checkpoint。`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；后续重点是清理 Graph checkpoint 连接生命周期和更细粒度的节点级幂等恢复。
 
 Evidence delivery 是最终状态来源。即使独立 review 有 blocking finding，系统也会写入 `06_review.yaml`、`07_evidence.yaml` 和 `delivery-report.md`；此时 evidence 的 `final_status` 与 Artifact envelope status 都必须是 `human_required`。
