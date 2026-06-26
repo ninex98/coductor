@@ -10,6 +10,8 @@ from coductor.config.models import CoductorConfig, QualityGateConfig
 from coductor.domain.enums import RunStatus, WorkerStatus
 from coductor.services.run_service import RunService
 from coductor.workflow.graph_runner import WorkflowGraphRunner
+from coductor.workflow.langgraph_checkpoint import langgraph_thread_config
+from coductor.workflow.state import WorkflowState
 
 
 def _config(command: str, *, max_repair_attempts: int = 2) -> CoductorConfig:
@@ -234,6 +236,29 @@ def test_run_service_compile_langgraph_allows_missing_checkpointer(
 
     assert service.compile_langgraph() == "compiled"
     assert received == [None]
+
+
+def test_run_service_save_checkpoint_updates_langgraph_sqlite_state(
+    tmp_path: Path,
+) -> None:
+    service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
+    run_id = "run_langgraph_checkpoint_000000000001"
+
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            raw_goal="验证 LangGraph 原生 checkpoint",
+            current_stage="draft_spec",
+            artifacts={"02_spec": "02_spec.yaml"},
+        )
+    )
+
+    snapshot = service.compile_langgraph().get_state(langgraph_thread_config(run_id))
+
+    assert snapshot.values["run_id"] == run_id
+    assert snapshot.values["current_stage"] == "draft_spec"
+    assert snapshot.values["artifacts"]["02_spec"] == "02_spec.yaml"
 
 
 def test_run_service_uses_workflow_graph_runner_for_front_half(

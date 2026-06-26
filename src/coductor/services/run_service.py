@@ -43,6 +43,7 @@ from coductor.workflow.graph_runner import WorkflowGraphRunner
 from coductor.workflow.langgraph_checkpoint import (
     LangGraphSqliteCheckpointUnavailable,
     create_langgraph_sqlite_saver,
+    langgraph_thread_config,
 )
 from coductor.workflow.state import WorkflowState
 
@@ -263,6 +264,23 @@ class RunService:
 
     def save_checkpoint(self, state: WorkflowState) -> None:
         self.checkpoints.save(state, utc_now())
+        self._save_langgraph_checkpoint(state)
+
+    def _save_langgraph_checkpoint(self, state: WorkflowState) -> None:
+        connection = sqlite3.connect(self.db.path)
+        try:
+            saver = create_langgraph_sqlite_saver(connection)
+        except LangGraphSqliteCheckpointUnavailable:
+            connection.close()
+            return
+        try:
+            graph = compile_workflow_graph(checkpointer=saver)
+            graph.update_state(
+                langgraph_thread_config(state.run_id),
+                state.model_dump(mode="json"),
+            )
+        finally:
+            connection.close()
 
     def langgraph_checkpointer(self) -> Any | None:
         connection = sqlite3.connect(self.db.path)
