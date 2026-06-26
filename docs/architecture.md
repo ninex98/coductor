@@ -39,7 +39,7 @@ collect_goal
 
 ## Backend Boundary
 
-`src/coductor/backends/factory.py` 负责所有 Backend 选择。`fake` 是测试和离线 smoke 的确定性实现；`codex_sdk` 保留 SDK 配置边界；当 SDK 不可用且配置 fallback 为 `codex_exec` 时，factory 会降级到 CLI backend。
+`src/coductor/backends/factory.py` 负责所有 Backend 选择。`codex_exec` 是默认真实执行路径；`fake` 是测试和离线 smoke 的确定性实现；`codex_sdk` 保留 SDK 配置边界，需要显式配置后使用。当 SDK 不可用且配置 fallback 为 `codex_exec` 时，factory 会降级到 CLI backend。
 
 `CodexExecBackend` 使用 list-based `subprocess.run()`，prompt 通过 stdin 传入，当前命令形态是 `codex exec --sandbox <mode> --skip-git-repo-check -`。它不使用 Codex CLI 的 JSON/schema 模式：Worker 可以返回普通文本摘要，Coductor 再把摘要、退出原因、命令记录和 patch 引用包装进固定 YAML Artifact。
 

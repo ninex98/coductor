@@ -4,7 +4,7 @@ project:
   root: "."
   default_branch: main
 backend:
-  provider: codex_sdk
+  provider: codex_exec
   model: null
   reasoning_effort: null
   fallback: codex_exec

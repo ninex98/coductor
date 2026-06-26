@@ -20,6 +20,13 @@ def test_backend_factory_selects_fake() -> None:
     assert isinstance(backend, FakeCodingBackend)
 
 
+def test_default_backend_provider_is_codex_exec() -> None:
+    config = CoductorConfig.default()
+
+    assert config.backend.provider == "codex_exec"
+    assert isinstance(create_backend(config), CodexExecBackend)
+
+
 def test_backend_factory_selects_codex_exec() -> None:
     config = CoductorConfig.default()
     config.backend.provider = "codex_exec"

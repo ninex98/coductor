@@ -18,7 +18,7 @@ class ProjectConfig(ConfigModel):
 
 
 class BackendConfig(ConfigModel):
-    provider: str = "codex_sdk"
+    provider: str = "codex_exec"
     model: str | None = None
     reasoning_effort: str | None = None
     fallback: str = "codex_exec"
