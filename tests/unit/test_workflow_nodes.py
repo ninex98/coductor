@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from coductor.artifacts.repository import ArtifactRepository
+from coductor.config.models import CoductorConfig
 from coductor.domain.enums import RunStatus
+from coductor.storage.database import Database
+from coductor.workflow.artifact_writer import WorkflowArtifactWriter
+from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.nodes.deliver import prepare_evidence_node
 from coductor.workflow.nodes.execute import dispatch_tasks_node, materialize_tasks_node
 from coductor.workflow.nodes.inspect import inspect_repository_node
@@ -11,6 +16,7 @@ from coductor.workflow.nodes.repair import repair_failure_node
 from coductor.workflow.nodes.review import run_independent_review_node
 from coductor.workflow.nodes.specify import draft_spec_node
 from coductor.workflow.nodes.verify import run_quality_gates_node
+from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
 
@@ -74,3 +80,35 @@ def test_back_half_nodes_record_stage_and_artifact_paths() -> None:
             "artifacts": {"07_evidence": "07_evidence.yaml"},
         },
     ]
+
+
+def test_collect_goal_node_writes_goal_artifact_when_runtime_context_is_present(tmp_path) -> None:
+    run_id = "run_goal_node_000000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=WorkflowArtifactWriter(tmp_path, CoductorConfig.default()),
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = collect_goal_node(state, context=context)
+
+    assert patch == {
+        "current_stage": "inspect_repository",
+        "artifacts": {"00_goal": "00_goal.yaml"},
+    }
+    assert repo.read("00_goal.yaml").data["raw_request"] == "修复示例函数"
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["00_goal"] == "00_goal.yaml"
+    assert saved.current_stage == "inspect_repository"

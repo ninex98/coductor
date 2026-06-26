@@ -16,12 +16,14 @@ from coductor.artifacts.models import (
 )
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle
-from coductor.domain.enums import ExecutionMode, RunStatus
+from coductor.domain.enums import ArtifactType, ExecutionMode, RunStatus
 from coductor.services.repair_service import RepairService
 from coductor.services.task_execution_service import ExecutedTask, TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
+from coductor.workflow.nodes import intake
+from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
 
@@ -51,15 +53,18 @@ class WorkflowGraphRunner:
     ]:
         if state.raw_goal is None:
             raise ValueError("workflow state must include raw_goal")
-        goal = self.artifacts.write_goal(
-            self.repo,
-            state.run_id,
-            state.raw_goal,
-            requested_mode,
+        state.requested_mode = str(requested_mode)
+        intake.collect_goal_node(
+            state,
+            context=WorkflowRuntimeContext(
+                repo=self.repo,
+                artifacts=self.artifacts,
+                checkpoints=self.checkpoints,
+            ),
         )
-        state.artifacts["00_goal"] = "00_goal.yaml"
-        state.current_stage = "inspect_repository"
-        self._save(state)
+        goal = ArtifactEnvelope[GoalData].model_validate(
+            self.repo.read("00_goal.yaml", ArtifactType.GOAL).model_dump(mode="json")
+        )
 
         snapshot = self.artifacts.write_snapshot(self.repo, state.run_id, goal)
         state.artifacts["01_repository_snapshot"] = "01_repository_snapshot.yaml"

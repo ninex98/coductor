@@ -14,6 +14,7 @@ from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.graph_runner import WorkflowGraphRunner
+from coductor.workflow.nodes import intake
 from coductor.workflow.state import WorkflowState
 
 
@@ -51,6 +52,42 @@ def test_graph_runner_executes_front_half_artifacts_and_checkpoint(tmp_path: Pat
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.artifacts["02_spec"] == "02_spec.yaml"
+
+
+def test_graph_runner_uses_collect_goal_node_for_goal_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=WorkflowArtifactWriter(tmp_path, config),
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+    calls: list[str] = []
+    original = intake.collect_goal_node
+
+    def recording_collect_goal_node(state, *, context=None):
+        calls.append(state.run_id)
+        return original(state, context=context)
+
+    monkeypatch.setattr(intake, "collect_goal_node", recording_collect_goal_node)
+
+    runner.run_front_half(state, requested_mode=ExecutionMode.AUTO)
+
+    assert calls == [run_id]
 
 
 def test_graph_runner_executes_plan_tasks_and_checkpoint(tmp_path: Path) -> None:
