@@ -49,9 +49,15 @@ class ReportService:
         lines.extend(files or ["No YAML artifacts found."])
         return "\n".join(lines) + "\n"
 
-    def logs(self, run_id: str, *, stage_filter: str | None = None) -> str:
+    def logs(
+        self,
+        run_id: str,
+        *,
+        stage_filter: str | None = None,
+        tail: int | None = None,
+    ) -> str:
         self.run_context(run_id, "logs")
-        events = self.log_events(run_id, stage_filter=stage_filter)
+        events = self.log_events(run_id, stage_filter=stage_filter, tail=tail)
         lines = self._header(
             run_id=run_id,
             stage="logs",
@@ -72,11 +78,14 @@ class ReportService:
         run_id: str,
         *,
         stage_filter: str | None = None,
+        tail: int | None = None,
     ) -> list[dict[str, str]]:
         self.run_context(run_id, "logs")
         events = self.database.list_events(run_id)
         if stage_filter is not None:
             events = [event for event in events if event["stage"] == stage_filter]
+        if tail is not None and tail >= 0:
+            events = events[-tail:] if tail else []
         return events
 
     def explain(self, run_id: str) -> str:

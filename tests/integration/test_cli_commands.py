@@ -303,6 +303,37 @@ def test_cli_logs_json_respects_stage_filter(
     ]
 
 
+def test_cli_logs_tail_limits_recent_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.add_event(
+        "run_abc",
+        "run_quality_gates",
+        "gate passed",
+        "2026-06-24T00:00:02Z",
+    )
+    db.add_event(
+        "run_abc",
+        "prepare_evidence",
+        "evidence ready",
+        "2026-06-24T00:00:03Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["logs", "run_abc", "--tail", "2", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [event["stage"] for event in payload["events"]] == [
+        "run_quality_gates",
+        "prepare_evidence",
+    ]
+
+
 def test_cli_explain_summarizes_recoverability_and_next_command(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
