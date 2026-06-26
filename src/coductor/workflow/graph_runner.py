@@ -11,7 +11,9 @@ from coductor.artifacts.models import (
     SpecificationData,
 )
 from coductor.artifacts.repository import ArtifactRepository
+from coductor.backends.base import WorkerHandle
 from coductor.domain.enums import ExecutionMode
+from coductor.services.task_execution_service import ExecutedTask, TaskExecutionService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.state import WorkflowState
@@ -74,6 +76,31 @@ class WorkflowGraphRunner:
         state.current_stage = "create_execution_plan"
         self._save(state)
         return goal, snapshot, spec, plan, state
+
+    def run_task_execution(
+        self,
+        state: WorkflowState,
+        *,
+        plan: ArtifactEnvelope[Any],
+        tasks: TaskExecutionService,
+    ) -> tuple[list[ExecutedTask], WorkflowState]:
+        def on_dispatch(task_id: str, worker_handle: WorkerHandle) -> None:
+            del worker_handle
+            state.artifacts[f"task_{task_id}"] = f"tasks/{task_id}/task.yaml"
+            state.current_stage = "dispatch_tasks"
+            self._save(state)
+            state.artifacts[f"worker_result_{task_id}"] = (
+                f"tasks/{task_id}/worker_result.yaml"
+            )
+            self._save(state)
+
+        executed = tasks.execute_plan_tasks(
+            self.repo,
+            state.run_id,
+            plan,
+            on_dispatch=on_dispatch,
+        )
+        return executed, state
 
     def _save(self, state: WorkflowState) -> None:
         self.checkpoints.save(state, utc_now())
