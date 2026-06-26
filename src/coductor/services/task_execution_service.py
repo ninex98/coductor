@@ -28,9 +28,16 @@ from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
 
 class ExecutedTask:
-    def __init__(self, task_id: str, handle: WorkerHandle) -> None:
+    def __init__(
+        self,
+        task_id: str,
+        handle: WorkerHandle,
+        *,
+        produced_contracts: dict[str, ContractArtifact] | None = None,
+    ) -> None:
         self.task_id = task_id
         self.handle = handle
+        self.produced_contracts = produced_contracts or {}
 
 
 class TaskExecutionService:
@@ -57,17 +64,41 @@ class TaskExecutionService:
         executed: list[ExecutedTask] = []
         contracts: dict[str, ContractArtifact] = {}
         for plan_task in self.tasks_in_dependency_order(plan.data.tasks):
-            task_contracts = [
-                contract
-                for path, contract in contracts.items()
-                if path in plan_task.consumes
-            ]
-            task = self.write_task(repo, run_id, plan, plan_task, task_contracts)
-            worker_handle = self.dispatch_builder(repo, run_id, task)
-            on_dispatch(plan_task.id, worker_handle)
-            executed.append(ExecutedTask(plan_task.id, worker_handle))
-            contracts.update(self.materialize_contracts(repo, plan_task))
+            executed_task = self.execute_plan_task(
+                repo,
+                run_id,
+                plan,
+                plan_task,
+                contracts,
+                on_dispatch=on_dispatch,
+            )
+            executed.append(executed_task)
+            contracts.update(executed_task.produced_contracts)
         return executed
+
+    def execute_plan_task(
+        self,
+        repo: ArtifactRepository,
+        run_id: str,
+        plan: ArtifactEnvelope[Any],
+        plan_task: PlanTask,
+        contracts: dict[str, ContractArtifact],
+        *,
+        on_dispatch: Callable[[str, WorkerHandle], None],
+    ) -> ExecutedTask:
+        task_contracts = [
+            contract
+            for path, contract in contracts.items()
+            if path in plan_task.consumes
+        ]
+        task = self.write_task(repo, run_id, plan, plan_task, task_contracts)
+        worker_handle = self.dispatch_builder(repo, run_id, task)
+        on_dispatch(plan_task.id, worker_handle)
+        return ExecutedTask(
+            plan_task.id,
+            worker_handle,
+            produced_contracts=self.materialize_contracts(repo, plan_task),
+        )
 
     def materialize_contracts(
         self,
