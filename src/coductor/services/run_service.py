@@ -39,6 +39,7 @@ from coductor.services.workflow_verification_service import WorkflowVerification
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
+from coductor.workflow.graph_runner import WorkflowGraphRunner
 from coductor.workflow.state import WorkflowState
 
 
@@ -94,23 +95,14 @@ class RunService:
         self.save_checkpoint(state)
         self._event(run_id, "collect_goal", "accepted user goal")
 
-        goal = self._write_goal(repo, run_id, raw_goal, requested_mode)
-        state.artifacts["00_goal"] = "00_goal.yaml"
-        state.current_stage = "inspect_repository"
-        self.save_checkpoint(state)
         self._event(run_id, "inspect_repository", "capturing repository snapshot")
-        snapshot = self._write_snapshot(repo, run_id, goal)
-        state.artifacts["01_repository_snapshot"] = "01_repository_snapshot.yaml"
-        state.current_stage = "draft_spec"
-        self.save_checkpoint(state)
         self._event(run_id, "draft_spec", "writing specification artifact")
-        spec = self._write_spec(repo, run_id, goal, snapshot)
-        state.artifacts["02_spec"] = "02_spec.yaml"
-        state.current_stage = "create_execution_plan"
-        self.save_checkpoint(state)
         self._event(run_id, "create_execution_plan", "choosing execution strategy")
-        plan = self._write_plan(repo, run_id, spec, snapshot, requested_mode)
-        state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
+        goal, _snapshot, _spec, plan, state = WorkflowGraphRunner(
+            repo=repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+        ).run_front_half(state, requested_mode=requested_mode)
         if not plan.data.validation.valid:
             state.status = RunStatus.HUMAN_REQUIRED
             state.current_stage = "human_required"

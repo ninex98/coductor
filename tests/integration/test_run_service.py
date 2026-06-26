@@ -8,6 +8,7 @@ from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig, QualityGateConfig
 from coductor.domain.enums import RunStatus, WorkerStatus
 from coductor.services.run_service import RunService
+from coductor.workflow.graph_runner import WorkflowGraphRunner
 
 
 def _config(command: str, *, max_repair_attempts: int = 2) -> CoductorConfig:
@@ -93,3 +94,25 @@ def test_run_requires_human_when_worker_fails_even_without_gates(tmp_path: Path)
     run_dir = tmp_path / ".coductor" / "runs" / result.run_id
     assert (run_dir / "tasks" / "T001" / "worker_result.yaml").exists()
     assert not (run_dir / "07_evidence.yaml").exists()
+
+
+def test_run_service_uses_workflow_graph_runner_for_front_half(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    calls: list[str] = []
+    original = WorkflowGraphRunner.run_front_half
+
+    def recording_run_front_half(self, state, *, requested_mode):
+        calls.append(state.run_id)
+        return original(self, state, requested_mode=requested_mode)
+
+    monkeypatch.setattr(WorkflowGraphRunner, "run_front_half", recording_run_front_half)
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("创建网页小游戏")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert calls == [result.run_id]
