@@ -7,14 +7,16 @@ from typing import Any
 
 from coductor.artifacts.models import (
     ArtifactEnvelope,
+    EvidenceBundleData,
     GateReportData,
     GoalData,
     RepositorySnapshotData,
+    ReviewReportData,
     SpecificationData,
 )
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle
-from coductor.domain.enums import ExecutionMode
+from coductor.domain.enums import ExecutionMode, RunStatus
 from coductor.services.task_execution_service import ExecutedTask, TaskExecutionService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter, utc_now
@@ -139,6 +141,36 @@ class WorkflowGraphRunner:
         state.gate_passed = gate_report.data.required_gates_passed
         self._save(state)
         return gate_report, state
+
+    def run_review(
+        self,
+        state: WorkflowState,
+        *,
+        review: Callable[[], ArtifactEnvelope[ReviewReportData]],
+    ) -> tuple[ArtifactEnvelope[ReviewReportData], WorkflowState]:
+        review_report = review()
+        state.artifacts["06_review"] = "06_review.yaml"
+        state.current_stage = "run_independent_review"
+        state.review_passed = not review_report.data.requires_repair
+        self._save(state)
+        return review_report, state
+
+    def run_evidence(
+        self,
+        state: WorkflowState,
+        *,
+        evidence: Callable[[], ArtifactEnvelope[EvidenceBundleData]],
+    ) -> tuple[ArtifactEnvelope[EvidenceBundleData], WorkflowState]:
+        evidence_bundle = evidence()
+        state.artifacts["07_evidence"] = "07_evidence.yaml"
+        state.status = (
+            RunStatus.READY_FOR_HUMAN_REVIEW
+            if evidence_bundle.data.final_status == "ready_for_human_review"
+            else RunStatus.HUMAN_REQUIRED
+        )
+        state.current_stage = "prepare_evidence"
+        self._save(state)
+        return evidence_bundle, state
 
     def _save(self, state: WorkflowState) -> None:
         self.checkpoints.save(state, utc_now())
