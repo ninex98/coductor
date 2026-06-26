@@ -425,3 +425,57 @@ def test_repair_failure_node_writes_repair_artifacts_when_runtime_context_is_pre
     assert saved.repair_attempts == 1
     assert saved.current_stage == "run_quality_gates"
     assert saved.artifacts["repair_result_R001"] == "repairs/R001/repair_result.yaml"
+
+
+def test_run_independent_review_node_saves_review_when_runtime_context_is_present(
+    tmp_path,
+) -> None:
+    run_id = "run_review_node_000000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, CoductorConfig.default())
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    def write_review():
+        from coductor.artifacts.models import ReviewReportData
+
+        envelope = writer.envelope(
+            run_id=run_id,
+            artifact_type=ArtifactType.REVIEW_REPORT,
+            artifact_id_prefix="art_review",
+            status=ArtifactStatus.PASSED,
+            producer={"kind": "model", "name": "reviewer"},
+            data=ReviewReportData(
+                reviewer_thread_id="thread_review",
+                reviewed_base_commit="base",
+                reviewed_head_commit="head",
+                findings=[],
+                blocking_findings=0,
+                verdict="pass",
+                requires_repair=False,
+            ),
+        )
+        repo.write("06_review.yaml", envelope)
+        return envelope
+
+    patch = run_independent_review_node(state, context=context, review=write_review)
+
+    assert patch == {
+        "current_stage": "run_independent_review",
+        "artifacts": {"06_review": "06_review.yaml"},
+        "review_passed": True,
+    }
+    assert repo.read("06_review.yaml", ArtifactType.REVIEW_REPORT)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.review_passed is True
+    assert saved.artifacts["06_review"] == "06_review.yaml"

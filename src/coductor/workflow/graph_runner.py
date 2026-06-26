@@ -37,6 +37,9 @@ from coductor.workflow.nodes import (
 from coductor.workflow.nodes import (
     repair as repair_node,
 )
+from coductor.workflow.nodes import (
+    review as review_node,
+)
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -238,11 +241,20 @@ class WorkflowGraphRunner:
         *,
         review: Callable[[], ArtifactEnvelope[ReviewReportData]],
     ) -> tuple[ArtifactEnvelope[ReviewReportData], WorkflowState]:
-        review_report = review()
-        state.artifacts["06_review"] = "06_review.yaml"
-        state.current_stage = "run_independent_review"
-        state.review_passed = not review_report.data.requires_repair
-        self._save(state)
+        review_node.run_independent_review_node(
+            state,
+            context=WorkflowRuntimeContext(
+                repo=self.repo,
+                artifacts=self.artifacts,
+                checkpoints=self.checkpoints,
+            ),
+            review=review,
+        )
+        review_report = self._read_typed_artifact(
+            "06_review.yaml",
+            ArtifactType.REVIEW_REPORT,
+            ArtifactEnvelope[ReviewReportData],
+        )
         return review_report, state
 
     def run_evidence(
