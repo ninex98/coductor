@@ -51,9 +51,7 @@ class ReportService:
 
     def logs(self, run_id: str, *, stage_filter: str | None = None) -> str:
         self.run_context(run_id, "logs")
-        events = self.database.list_events(run_id)
-        if stage_filter is not None:
-            events = [event for event in events if event["stage"] == stage_filter]
+        events = self.log_events(run_id, stage_filter=stage_filter)
         lines = self._header(
             run_id=run_id,
             stage="logs",
@@ -68,6 +66,18 @@ class ReportService:
         else:
             lines.append("No events recorded.")
         return "\n".join(lines) + "\n"
+
+    def log_events(
+        self,
+        run_id: str,
+        *,
+        stage_filter: str | None = None,
+    ) -> list[dict[str, str]]:
+        self.run_context(run_id, "logs")
+        events = self.database.list_events(run_id)
+        if stage_filter is not None:
+            events = [event for event in events if event["stage"] == stage_filter]
+        return events
 
     def explain(self, run_id: str) -> str:
         row = self.run_context(run_id, "explain")

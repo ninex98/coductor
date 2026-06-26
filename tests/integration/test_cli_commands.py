@@ -271,6 +271,38 @@ def test_cli_logs_filters_by_stage(
     assert "gate passed" not in result.output
 
 
+def test_cli_logs_json_respects_stage_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.add_event(
+        "run_abc",
+        "run_quality_gates",
+        "gate passed",
+        "2026-06-24T00:00:02Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(
+        app,
+        ["logs", "run_abc", "--stage", "dispatch_tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["run_id"] == "run_abc"
+    assert payload["events"] == [
+        {
+            "stage": "dispatch_tasks",
+            "message": "dispatch T001",
+            "created_at": "2026-06-24T00:00:01Z",
+        }
+    ]
+
+
 def test_cli_explain_summarizes_recoverability_and_next_command(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
