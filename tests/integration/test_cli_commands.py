@@ -11,6 +11,8 @@ from coductor.domain.enums import RunStatus
 from coductor.domain.models import RunResult
 from coductor.exceptions import BackendUnavailableError
 from coductor.storage.database import Database
+from coductor.workflow.checkpoint import WorkflowCheckpointStore
+from coductor.workflow.state import WorkflowState
 
 
 def test_cli_root_help_is_bilingual_and_actionable() -> None:
@@ -199,6 +201,42 @@ def test_cli_explain_summarizes_recoverability_and_next_command(
     assert "Stage: explain" in result.output
     assert "Recoverable: yes" in result.output
     assert "Next command: coductor report run_abc" in result.output
+
+
+def test_cli_explain_includes_checkpoint_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs").save(
+        WorkflowState(
+            run_id="run_abc",
+            status=RunStatus.HUMAN_REQUIRED,
+            current_stage="dispatch_tasks",
+            raw_goal="先定义 schema 再实现",
+            run_dir=run_dir.as_posix(),
+            artifacts={
+                "task_T001": "tasks/T001/task.yaml",
+                "worker_result_T001": "tasks/T001/worker_result.yaml",
+            },
+            completed_task_ids=["T001"],
+            stale_artifacts=["contracts/generated.schema.json: sha256 mismatch"],
+            last_error="stale artifact lineage detected",
+        ),
+        "2026-06-24T00:00:02Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["explain", "run_abc"])
+
+    assert result.exit_code == 0
+    assert "Current stage: dispatch_tasks" in result.output
+    assert "Completed tasks: T001" in result.output
+    assert "Last error: stale artifact lineage detected" in result.output
+    assert "Stale artifacts:" in result.output
+    assert "contracts/generated.schema.json: sha256 mismatch" in result.output
 
 
 def test_cli_missing_run_failure_includes_recovery_context(

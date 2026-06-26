@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from coductor.storage.database import Database
+from coductor.workflow.state import WorkflowState
 
 CONTROL_STATUS: dict[str, str] = {
     "approve": "approved",
@@ -78,6 +79,9 @@ class ReportService:
                 f"Updated: {row['updated_at']}",
             ]
         )
+        checkpoint = self._checkpoint(run_id)
+        if checkpoint is not None:
+            lines.extend(self._checkpoint_lines(checkpoint))
         return "\n".join(lines) + "\n"
 
     def control_result(self, run_id: str, command: str) -> str:
@@ -126,6 +130,24 @@ class ReportService:
         if status == "running":
             return f"coductor logs {run_id}"
         return f"coductor status {run_id}"
+
+    def _checkpoint(self, run_id: str) -> WorkflowState | None:
+        data = self.database.get_checkpoint(run_id)
+        if data is None:
+            return None
+        return WorkflowState.model_validate(data)
+
+    def _checkpoint_lines(self, state: WorkflowState) -> list[str]:
+        lines = [
+            f"Current stage: {state.current_stage}",
+            f"Completed tasks: {', '.join(state.completed_task_ids) or '-'}",
+        ]
+        if state.last_error:
+            lines.append(f"Last error: {state.last_error}")
+        if state.stale_artifacts:
+            lines.append("Stale artifacts:")
+            lines.extend(f"- {artifact}" for artifact in state.stale_artifacts)
+        return lines
 
 
 class RunReportError(Exception):
