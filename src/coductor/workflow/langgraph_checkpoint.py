@@ -15,7 +15,7 @@ def langgraph_thread_config(run_id: str) -> dict[str, dict[str, str]]:
 
 
 def _load_sqlite_saver() -> Any:
-    from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore[import-not-found]
+    from langgraph.checkpoint.sqlite import SqliteSaver
 
     return SqliteSaver
 
