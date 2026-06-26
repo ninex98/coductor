@@ -8,6 +8,10 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from coductor.domain.enums import RunStatus
+from coductor.workflow.nodes.inspect import inspect_repository_node
+from coductor.workflow.nodes.intake import collect_goal_node
+from coductor.workflow.nodes.plan import create_execution_plan_node
+from coductor.workflow.nodes.specify import draft_spec_node
 from coductor.workflow.state import WorkflowState
 
 WORKFLOW_NODES = [
@@ -80,11 +84,11 @@ def _route_after_review(state: WorkflowState) -> str:
 
 def build_workflow_graph() -> StateGraph[WorkflowState]:
     graph = StateGraph(WorkflowState)
-    _add_node(graph, "collect_goal", _stage_node("collect_goal"))
-    _add_node(graph, "inspect_repository", _stage_node("inspect_repository"))
-    _add_node(graph, "draft_spec", _stage_node("draft_spec"))
+    _add_node(graph, "collect_goal", collect_goal_node)
+    _add_node(graph, "inspect_repository", inspect_repository_node)
+    _add_node(graph, "draft_spec", draft_spec_node)
     _add_node(graph, "validate_spec", _stage_node("validate_spec"))
-    _add_node(graph, "create_execution_plan", _stage_node("create_execution_plan"))
+    _add_node(graph, "create_execution_plan", create_execution_plan_node)
     _add_node(graph, "validate_execution_plan", _stage_node("validate_execution_plan"))
     _add_node(graph, "materialize_tasks", _stage_node("materialize_tasks"))
     _add_node(graph, "dispatch_tasks", _stage_node("dispatch_tasks"))
