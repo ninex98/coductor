@@ -20,7 +20,7 @@ Coductor 的阶段术语固定如下：
 
 `resume` 当前通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数。恢复前会扫描 run 目录中的 Artifact 链路；若上游 hash、revision 或下游记录的 contract hash 不一致，流程进入 `human_required`，并在 checkpoint 中记录 `stale_artifacts`。链路有效且 checkpoint 中记录的 Artifact 都存在时，contextual LangGraph 会从 checkpoint stage 继续；若 checkpoint 缺少必要 Artifact，则从 `collect_goal` 重放，以保持固定 YAML 事实链完整。
 
-CLI 可观测性分三层：`coductor status [RUN_ID]` 查看运行总览，`coductor status RUN_ID --json` 输出包含 run 表记录和 checkpoint 摘要的机器可读 JSON；`coductor logs RUN_ID --stage dispatch_tasks` 可按阶段过滤事件日志；`coductor explain RUN_ID` 读取 SQLite checkpoint 并显示 `current_stage`、`completed_task_ids`、`last_error` 和 `stale_artifacts`；`coductor artifacts RUN_ID` 在列出 YAML Artifact 前也会显示同一份 checkpoint 摘要，方便把固定文件产物和当前运行状态对齐。
+CLI 可观测性分三层：`coductor status [RUN_ID]` 查看运行总览，`coductor status RUN_ID --json` 输出包含 run 表记录和 checkpoint 摘要的机器可读 JSON；`coductor logs RUN_ID --stage dispatch_tasks --tail 20 --json` 可按阶段过滤、截取最近事件并输出机器可读日志；`coductor explain RUN_ID` 读取 SQLite checkpoint 并显示 `current_stage`、`completed_task_ids`、`last_error` 和 `stale_artifacts`；`coductor artifacts RUN_ID` 在列出 YAML Artifact 前也会显示同一份 checkpoint 摘要，方便把固定文件产物和当前运行状态对齐。
 
 `RunService` 构建 contextual LangGraph 作为当前主编排器。阶段节点仍保持薄，具体领域逻辑继续放在 artifact writer、task execution、verification、repair、review delivery 等服务中；节点负责读取上游 Artifact、调用服务、记录固定 Artifact 路径和 checkpoint。`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；后续重点是清理 Graph checkpoint 连接生命周期和更细粒度的节点级幂等恢复。
 
