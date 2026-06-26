@@ -76,6 +76,10 @@ def _print(message: str) -> None:
         print(message)
 
 
+def _print_plain(message: str) -> None:
+    print(message)
+
+
 def print_quick_start() -> None:
     _print(CLI_HELP.strip())
 
@@ -193,13 +197,29 @@ def _static_preview_command(root: Path) -> str | None:
     return None
 
 
-def status_run(run_id: str | None = None, watch: bool = False) -> None:
+def status_run(
+    run_id: str | None = None,
+    watch: bool = False,
+    json_output: bool = False,
+) -> None:
     del watch
     root = _root(".")
     db = _db(root)
     row = db.get_run(run_id) if run_id else db.latest_run()
     if row is None:
         _print("未找到运行记录。")
+        return
+    if json_output:
+        payload: dict[str, Any] = {"run": row, "checkpoint": None}
+        checkpoint = db.get_checkpoint(row["run_id"])
+        if checkpoint is not None:
+            payload["checkpoint"] = {
+                "current_stage": checkpoint.get("current_stage"),
+                "completed_task_ids": checkpoint.get("completed_task_ids", []),
+                "last_error": checkpoint.get("last_error"),
+                "stale_artifacts": checkpoint.get("stale_artifacts", []),
+            }
+        _print_plain(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     if Table is not None and console is not None:
         table = Table(title="Coductor Run Status")
@@ -387,8 +407,12 @@ if typer is not None:
     def status_command(
         run_id: Annotated[str | None, typer.Argument(help="Run ID，可省略为最新运行")] = None,
         watch: Annotated[bool, typer.Option("--watch", help="持续刷新 / Watch updates")] = False,
+        json_output: Annotated[
+            bool,
+            typer.Option("--json", help="输出机器可读 JSON / Output machine-readable JSON"),
+        ] = False,
     ) -> None:
-        status_run(run_id, watch)
+        status_run(run_id, watch, json_output)
 
     @app.command("show", help="显示运行摘要 / Show run summary.")  # type: ignore[untyped-decorator]
     def show_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
@@ -452,6 +476,7 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     status_parser = sub.add_parser("status")
     status_parser.add_argument("run_id", nargs="?")
     status_parser.add_argument("--watch", action="store_true")
+    status_parser.add_argument("--json", action="store_true")
     show_parser = sub.add_parser("show")
     show_parser.add_argument("run_id")
     resume_parser = sub.add_parser("resume")
@@ -474,7 +499,7 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     elif args.command == "run":
         run_goal(args.goal, args.mode, args.dry_run, args.backend)
     elif args.command == "status":
-        status_run(args.run_id, args.watch)
+        status_run(args.run_id, args.watch, args.json)
     elif args.command == "show":
         show_run(args.run_id)
     elif args.command == "resume":

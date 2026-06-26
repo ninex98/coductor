@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,39 @@ def test_cli_init_empty_project_has_no_default_python_gates(
     assert "quality_gates: []" in config
     assert "pytest -q" not in config
     assert "ruff check ." not in config
+
+
+def test_cli_status_json_includes_checkpoint_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs").save(
+        WorkflowState(
+            run_id="run_abc",
+            status=RunStatus.RUNNING,
+            current_stage="dispatch_tasks",
+            run_dir=run_dir.as_posix(),
+            completed_task_ids=["T001"],
+            stale_artifacts=["contracts/generated.schema.json: sha256 mismatch"],
+        ),
+        "2026-06-24T00:00:02Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["status", "run_abc", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["run"]["run_id"] == "run_abc"
+    assert payload["run"]["status"] == "running"
+    assert payload["checkpoint"]["current_stage"] == "dispatch_tasks"
+    assert payload["checkpoint"]["completed_task_ids"] == ["T001"]
+    assert payload["checkpoint"]["stale_artifacts"] == [
+        "contracts/generated.schema.json: sha256 mismatch"
+    ]
 
 
 def _seed_run(root: Path, run_id: str = "run_abc") -> Path:
