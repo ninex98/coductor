@@ -298,6 +298,49 @@ def test_graph_runner_uses_materialize_tasks_node_before_task_execution(
     assert calls == [run_id]
 
 
+def test_graph_runner_uses_dispatch_tasks_node_when_worker_dispatches(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_id = "run_abc"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    runner = WorkflowGraphRunner(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status="running",
+        raw_goal="创建网页小游戏",
+        requested_mode="solo",
+        run_dir=run_dir.as_posix(),
+    )
+    _goal, _snapshot, _spec, plan_artifact, state = runner.run_front_half(
+        state,
+        requested_mode=ExecutionMode.SOLO,
+    )
+    service = TaskExecutionService(tmp_path, config, FakeCodingBackend(), writer)
+    calls: list[str] = []
+    original = execute.dispatch_tasks_node
+
+    def recording_dispatch_tasks_node(state, *, context=None):
+        calls.append(state.run_id)
+        return original(state, context=context)
+
+    monkeypatch.setattr(execute, "dispatch_tasks_node", recording_dispatch_tasks_node)
+
+    runner.run_task_execution(state, plan=plan_artifact, tasks=service)
+
+    assert calls == [run_id]
+
+
 def test_graph_runner_runs_integration_and_quality_gates(tmp_path: Path) -> None:
     run_id = "run_abc"
     run_dir = tmp_path / ".coductor" / "runs" / run_id

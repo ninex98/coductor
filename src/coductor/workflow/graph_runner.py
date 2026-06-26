@@ -125,21 +125,22 @@ class WorkflowGraphRunner:
         tasks: TaskExecutionService,
         on_dispatch: Callable[[str, WorkerHandle], None] | None = None,
     ) -> tuple[list[ExecutedTask], WorkflowState]:
+        context = WorkflowRuntimeContext(
+            repo=self.repo,
+            artifacts=self.artifacts,
+            checkpoints=self.checkpoints,
+        )
         execute.materialize_tasks_node(
             state,
-            context=WorkflowRuntimeContext(
-                repo=self.repo,
-                artifacts=self.artifacts,
-                checkpoints=self.checkpoints,
-            ),
+            context=context,
         )
 
         def record_dispatch(task_id: str, worker_handle: WorkerHandle) -> None:
             if on_dispatch is not None:
                 on_dispatch(task_id, worker_handle)
             del worker_handle
+            execute.dispatch_tasks_node(state, context=context)
             state.artifacts[f"task_{task_id}"] = f"tasks/{task_id}/task.yaml"
-            state.current_stage = "dispatch_tasks"
             self._save(state)
             state.artifacts[f"worker_result_{task_id}"] = (
                 f"tasks/{task_id}/worker_result.yaml"

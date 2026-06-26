@@ -19,6 +19,12 @@ def materialize_tasks_node(
     return {"current_stage": "materialize_tasks"}
 
 
-def dispatch_tasks_node(state: WorkflowState) -> dict[str, Any]:
-    del state
+def dispatch_tasks_node(
+    state: WorkflowState,
+    *,
+    context: WorkflowRuntimeContext | None = None,
+) -> dict[str, Any]:
+    if context is not None:
+        state.current_stage = "dispatch_tasks"
+        context.save(state)
     return {"current_stage": "dispatch_tasks"}
