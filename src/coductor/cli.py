@@ -421,20 +421,29 @@ def control_run(run_id: str, command: str) -> None:
         )
     try:
         try:
-            service.validate_control_command(run_id, command)
+            row = service.validate_control_command(run_id, command)
         except RunReportError as error:
             _exit_with_report_error(service, error)
         if command == "verify":
-            _rerun_verification(root, db, run_id)
-            _print(service.control_result(run_id, command))
+            _rerun_verification(root, db, run_id, row)
+            try:
+                _print(service.control_result(run_id, command))
+            except RunReportError as error:
+                _exit_with_report_error(service, error)
             return
         if command == "review":
-            _rerun_review(root, db, run_id)
-            _print(service.control_result(run_id, command))
+            _rerun_review(root, db, run_id, row)
+            try:
+                _print(service.control_result(run_id, command))
+            except RunReportError as error:
+                _exit_with_report_error(service, error)
             return
         if command == "approve":
-            _approve_run(root, db, run_id)
-            _print(service.control_result(run_id, command))
+            _approve_run(root, db, run_id, row)
+            try:
+                _print(service.control_result(run_id, command))
+            except RunReportError as error:
+                _exit_with_report_error(service, error)
             return
         status = CONTROL_STATUS[command]
         now = _utc_now()
@@ -550,8 +559,13 @@ def serve_web_console(
         raise SystemExit(1) from error
 
 
-def _approve_run(root: Path, db: Database, run_id: str) -> None:
-    row = db.get_run(run_id)
+def _approve_run(
+    root: Path,
+    db: Database,
+    run_id: str,
+    row: dict[str, str] | None = None,
+) -> None:
+    row = row or db.get_run(run_id)
     if row is None:
         return
     repo = ArtifactRepository(Path(row["run_dir"]))
@@ -641,8 +655,13 @@ def _approval_resume_state(
     return state
 
 
-def _rerun_verification(root: Path, db: Database, run_id: str) -> None:
-    row = db.get_run(run_id)
+def _rerun_verification(
+    root: Path,
+    db: Database,
+    run_id: str,
+    row: dict[str, str] | None = None,
+) -> None:
+    row = row or db.get_run(run_id)
     if row is None:
         return
     config = load_config(root)
@@ -659,8 +678,13 @@ def _rerun_verification(root: Path, db: Database, run_id: str) -> None:
     db.add_event(run_id, "verify", "quality gates rerun by cli", now)
 
 
-def _rerun_review(root: Path, db: Database, run_id: str) -> None:
-    row = db.get_run(run_id)
+def _rerun_review(
+    root: Path,
+    db: Database,
+    run_id: str,
+    row: dict[str, str] | None = None,
+) -> None:
+    row = row or db.get_run(run_id)
     if row is None:
         return
     config = load_config(root)

@@ -773,6 +773,49 @@ def test_cli_verify_reruns_quality_gates_and_updates_status(
     assert db.list_events("run_abc")[-1]["stage"] == "verify"
 
 
+def test_cli_verify_uses_validated_run_dir_for_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = _seed_run(tmp_path)
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(
+            [
+                'schema_version: "1.0"',
+                "backend:",
+                "  provider: fake",
+                "quality_gates:",
+                "  - id: unit_tests",
+                f"    command: {sys.executable} -c 'print(1)'",
+                "    required: true",
+                "    timeout_seconds: 30",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    original_validate = cli.ReportService.validate_control_command
+
+    def validate_then_tamper(self, run_id: str, command: str) -> dict[str, str]:
+        row = original_validate(self, run_id, command)
+        db.upsert_run(run_id, row["status"], outside.as_posix(), row["updated_at"])
+        return row
+
+    monkeypatch.setattr(cli.ReportService, "validate_control_command", validate_then_tamper)
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["verify", "run_abc"])
+
+    assert result.exit_code == 1
+    assert "outside project runs directory" in result.output
+    assert (run_dir / "05_gate_report.yaml").exists()
+    assert not (outside / "05_gate_report.yaml").exists()
+
+
 def test_cli_review_reruns_review_and_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
