@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from coductor.artifacts.hashing import file_sha256
@@ -19,6 +20,7 @@ from coductor.backends.base import CodingBackend, WorkerHandle, WorkerRequest
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ArtifactStatus, ArtifactType, ProducerKind, SandboxMode
 from coductor.prompts.renderer import render_worker_prompt
+from coductor.services.usage import usage_from_backend
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
 
@@ -88,9 +90,17 @@ class RepairService:
             thread_policy="resume",
             existing_thread_id=builder_handle.thread_id,
         )
+        started_at = time.monotonic()
         result = self.backend.continue_worker(builder_handle, request)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
         patch = repo.root / f"{repair_dir}/repair_result.patch"
         patch.write_text("# fake repair result\n", encoding="utf-8")
+        usage = usage_from_backend(
+            result.usage,
+            prompt=request.prompt,
+            summary=result.summary,
+            duration_ms=duration_ms,
+        )
         result_data = WorkerResultData(
             worker_id=result.worker_id,
             thread_id=result.thread_id,
@@ -101,6 +111,7 @@ class RepairService:
                 sha256=file_sha256(patch),
                 bytes=patch.stat().st_size,
             ),
+            usage=usage,
             exit_reason=result.exit_reason,
         )
         result_envelope = self.artifacts.envelope(

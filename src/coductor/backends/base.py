@@ -29,6 +29,17 @@ class WorkerHandle(BaseModel):
     thread_id: str
 
 
+class BackendUsage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    duration_ms: int | None = None
+    estimated: bool = True
+    estimated_cost_usd: float | None = None
+
+
 class WorkerResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,6 +53,7 @@ class WorkerResult(BaseModel):
     generated_artifacts: list[str] = []
     unresolved_issues: list[str] = []
     exit_reason: str = "completed"
+    usage: BackendUsage = BackendUsage()
 
 
 class CodingBackend(Protocol):

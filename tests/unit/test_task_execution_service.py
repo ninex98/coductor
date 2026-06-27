@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.serializer import load_yaml
-from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
+from coductor.backends.base import BackendUsage, WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ExecutionMode
@@ -36,6 +36,16 @@ class EnvChangingBackend(FakeCodingBackend):
             thread_id=handle.thread_id,
             summary="changed protected file",
             files_changed=[".env"],
+        )
+
+
+class UsageReportingBackend(FakeCodingBackend):
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        return WorkerResult(
+            worker_id=request.worker_id,
+            thread_id=handle.thread_id,
+            summary="used real backend metrics",
+            usage=BackendUsage(input_tokens=42, output_tokens=7, estimated=False),
         )
 
 
@@ -206,3 +216,34 @@ def test_task_execution_service_uses_budget_worker_timeout(tmp_path):
         (tmp_path / "tasks/T001/worker_request.yaml").read_text(encoding="utf-8")
     )
     assert request["data"]["timeout_seconds"] == 180
+
+
+def test_task_execution_service_records_worker_usage_metrics(tmp_path):
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    goal = writer.write_goal(repo, "run_abc", "修改文件", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.AUTO)
+    service = TaskExecutionService(tmp_path, config, UsageReportingBackend(), writer)
+
+    service.execute_plan_task(
+        repo,
+        "run_abc",
+        plan,
+        plan.data.tasks[0],
+        {},
+        on_dispatch=lambda *_: None,
+    )
+
+    worker_result = load_yaml(
+        (tmp_path / "tasks/T001/worker_result.yaml").read_text(encoding="utf-8")
+    )
+    usage = worker_result["data"]["usage"]
+    assert usage["input_tokens"] == 42
+    assert usage["output_tokens"] == 7
+    assert usage["total_tokens"] == 49
+    assert usage["estimated"] is False
+    assert isinstance(usage["duration_ms"], int)

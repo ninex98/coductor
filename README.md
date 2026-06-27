@@ -31,6 +31,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 - 显式 `parallel` 计划会先检查写路径冲突和 contract handoff，默认要求人工审批；`approve` 后 `resume` 会按 `max_parallel_workers` 在隔离 git worktree 并发执行独立任务，再串行回放 patch 并写 integration report；
 - 质量门执行、失败指纹、有限修复循环；
 - 独立 Reviewer Worker 和 Evidence Bundle；Evidence 只有在必需 Gate 通过、无 blocking review、且存在 patch evidence 时才 ready；
+- Worker、Repairer 和 Reviewer 调用会记录 duration/token usage，Evidence 与 delivery report 汇总运行指标；
 - SQLite run/event 索引。
 
 LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后：`codex_exec` 是默认真实执行路径，`fake` 用于离线验证，`codex_sdk` 保持 SDK 实验边界且需要显式配置。Backend 只提供执行摘要、命令记录和退出原因；`worker_result.yaml`、`review.yaml`、`gate_report.yaml`、`evidence.yaml` 等固定结构文件始终由 Coductor 写入，不能依赖外部 CLI 的 schema 模式。
@@ -123,7 +124,7 @@ data:
 
 ## Roadmap
 
-- 已完成：artifact lineage、resume stale 检测、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、parallel 审批恢复、worktree 并发执行、CLI 控制面真实 verify/review、evidence hardening、demo E2E。
-- 后续：Web 控制台、通知审批、PR 创建、成本/Token 指标、更多 Backend、LangGraph 原生 checkpoint 生命周期清理。
+- 已完成：artifact lineage、resume stale 检测、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、parallel 审批恢复、worktree 并发执行、CLI 控制面真实 verify/review、运行 duration/token 指标、evidence hardening、demo E2E。
+- 后续：Web 控制台、通知审批、PR 创建、更多 Backend、LangGraph 原生 checkpoint 生命周期清理。
 
 危险能力默认关闭：不推送远程分支，不创建 PR，不读取生产秘密，不自动合并。

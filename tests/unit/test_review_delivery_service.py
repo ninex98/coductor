@@ -7,7 +7,7 @@ from coductor.artifacts.models import (
     WorkerResultData,
 )
 from coductor.artifacts.repository import ArtifactRepository
-from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
+from coductor.backends.base import BackendUsage, WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ArtifactStatus, ArtifactType, ExecutionStrategy, ProducerKind
@@ -26,6 +26,7 @@ class TextReviewBackend(FakeCodingBackend):
                 worker_id=request.worker_id,
                 thread_id=handle.thread_id,
                 summary=self.review_summary,
+                usage=BackendUsage(input_tokens=30, output_tokens=6, estimated=False),
             )
         return super().continue_worker(handle, request)
 
@@ -68,7 +69,7 @@ def test_review_delivery_service_writes_review_evidence_and_report(tmp_path):
         ),
     )
     repo.write("tasks/T001/worker_result.yaml", worker_result)
-    service = ReviewDeliveryService(tmp_path, config, FakeCodingBackend(), writer)
+    service = ReviewDeliveryService(tmp_path, config, TextReviewBackend("VERDICT: pass"), writer)
 
     review = service.review(repo, "run_abc", gate_report, ["T001"])
     evidence = service.evidence(
@@ -82,6 +83,10 @@ def test_review_delivery_service_writes_review_evidence_and_report(tmp_path):
     )
 
     assert review.data.verdict == "pass"
+    assert review.data.usage.input_tokens == 30
+    assert review.data.usage.output_tokens == 6
+    assert review.data.usage.total_tokens == 36
+    assert review.data.usage.estimated is False
     assert evidence.data.final_status == "ready_for_human_review"
     assert (tmp_path / "06_review.yaml").exists()
     assert (tmp_path / "07_evidence.yaml").exists()

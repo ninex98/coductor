@@ -26,4 +26,4 @@ CLI 可观测性分三层：`coductor status [RUN_ID]` 查看运行总览，`cod
 
 `RunService` 构建 contextual LangGraph 作为当前主编排器。阶段节点仍保持薄，具体领域逻辑继续放在 artifact writer、task execution、verification、repair、review delivery 等服务中；节点负责读取上游 Artifact、调用服务、记录固定 Artifact 路径和 checkpoint。`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；后续重点是清理 Graph checkpoint 连接生命周期和更细粒度的节点级幂等恢复。
 
-Evidence delivery 是最终状态来源。即使独立 review 有 blocking finding，系统也会写入 `06_review.yaml`、`07_evidence.yaml` 和 `delivery-report.md`；此时 evidence 的 `final_status` 与 Artifact envelope status 都必须是 `human_required`。
+Evidence delivery 是最终状态来源。即使独立 review 有 blocking finding，系统也会写入 `06_review.yaml`、`07_evidence.yaml` 和 `delivery-report.md`；此时 evidence 的 `final_status` 与 Artifact envelope status 都必须是 `human_required`。Worker、Repairer 和 Reviewer 的 backend 调用会在对应 Artifact 的 `usage` 字段记录 duration/token 信息；没有真实 token usage 时使用本地估算并标记 `estimated: true`，最终由 `07_evidence.yaml` 的 `usage_summary` 和 delivery report 的 Run Metrics 汇总。

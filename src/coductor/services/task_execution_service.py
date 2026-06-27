@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import fnmatch
 import subprocess
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -35,6 +36,7 @@ from coductor.domain.enums import (
 )
 from coductor.prompts.renderer import render_worker_prompt
 from coductor.repository.worktree import WorktreeManager
+from coductor.services.usage import usage_from_backend
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
 
@@ -337,8 +339,10 @@ class TaskExecutionService:
                 sandbox=SandboxMode.WORKSPACE_WRITE,
                 timeout_seconds=request_data.timeout_seconds,
             )
+            started_at = time.monotonic()
             handle = self.backend.start_worker(request)
             result = self.backend.continue_worker(handle, request)
+            duration_ms = int((time.monotonic() - started_at) * 1000)
             patch = self.ensure_patch(
                 repo.root,
                 task_id,
@@ -351,6 +355,12 @@ class TaskExecutionService:
             unresolved_issues = result.unresolved_issues + apply_issues + protected_issues
         finally:
             self._cleanup_worker_workspace(run_id, task_id, strategy)
+        usage = usage_from_backend(
+            result.usage,
+            prompt=prompt,
+            summary=result.summary,
+            duration_ms=duration_ms,
+        )
         result_data = WorkerResultData(
             worker_id=result.worker_id,
             thread_id=result.thread_id,
@@ -367,6 +377,7 @@ class TaskExecutionService:
                 bytes=patch.stat().st_size,
             ),
             unresolved_issues=unresolved_issues,
+            usage=usage,
             exit_reason=exit_reason,
         )
         result_envelope = self.artifacts.envelope(

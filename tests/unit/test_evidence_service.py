@@ -6,6 +6,7 @@ from coductor.artifacts.models import (
     GateReportData,
     GateResultData,
     ReviewReportData,
+    WorkerUsage,
 )
 from coductor.domain.enums import ExecutionStrategy
 from coductor.services.evidence_service import EvidenceCompletenessValidator, EvidenceService
@@ -41,6 +42,13 @@ def _review(*, blocking_findings: int = 0) -> ReviewReportData:
         blocking_findings=blocking_findings,
         verdict="fail" if blocking_findings else "pass",
         requires_repair=blocking_findings > 0,
+        usage=WorkerUsage(
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=15,
+            duration_ms=3,
+            estimated=False,
+        ),
     )
 
 
@@ -93,3 +101,80 @@ def test_evidence_rejects_placeholder_patch(tmp_path: Path) -> None:
 
     assert evidence.final_status == "human_required"
     assert "patch evidence has no changes" in evidence.validation.errors
+
+
+def test_evidence_summarizes_worker_and_review_usage(tmp_path: Path) -> None:
+    patch = tmp_path / "tasks/T001/patch.diff"
+    patch.parent.mkdir(parents=True)
+    patch.write_text("diff --git a/file b/file\n", encoding="utf-8")
+    (tmp_path / "tasks/T001/worker_result.yaml").write_text(
+        "\n".join(
+            [
+                "data:",
+                "  usage:",
+                "    input_tokens: 40",
+                "    output_tokens: 12",
+                "    total_tokens: 52",
+                "    duration_ms: 20",
+                "    estimated: true",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = EvidenceService()
+    evidence = service.build(
+        run_dir=tmp_path,
+        goal_title="demo",
+        strategy=ExecutionStrategy.SOLO,
+        gate_report=_gate_report(passed=True),
+        review=_review(blocking_findings=0),
+        completed_tasks=["T001"],
+    )
+    report = service.write_report(tmp_path, evidence).read_text(encoding="utf-8")
+
+    assert evidence.usage_summary.input_tokens == 50
+    assert evidence.usage_summary.output_tokens == 17
+    assert evidence.usage_summary.total_tokens == 67
+    assert evidence.usage_summary.duration_ms == 23
+    assert evidence.usage_summary.estimated is True
+    assert "## Run Metrics" in report
+    assert "Tokens: input 50 / output 17 / total 67 (estimated)" in report
+
+
+def test_evidence_summarizes_repair_usage(tmp_path: Path) -> None:
+    patch = tmp_path / "tasks/T001/patch.diff"
+    patch.parent.mkdir(parents=True)
+    patch.write_text("diff --git a/file b/file\n", encoding="utf-8")
+    repair = tmp_path / "repairs/R001/repair_result.yaml"
+    repair.parent.mkdir(parents=True)
+    repair.write_text(
+        "\n".join(
+            [
+                "data:",
+                "  usage:",
+                "    input_tokens: 8",
+                "    output_tokens: 2",
+                "    total_tokens: 10",
+                "    duration_ms: 5",
+                "    estimated: false",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = EvidenceService().build(
+        run_dir=tmp_path,
+        goal_title="demo",
+        strategy=ExecutionStrategy.SOLO,
+        gate_report=_gate_report(passed=True),
+        review=_review(blocking_findings=0),
+        completed_tasks=["T001"],
+    )
+
+    assert evidence.usage_summary.input_tokens == 18
+    assert evidence.usage_summary.output_tokens == 7
+    assert evidence.usage_summary.total_tokens == 25
+    assert evidence.usage_summary.duration_ms == 8

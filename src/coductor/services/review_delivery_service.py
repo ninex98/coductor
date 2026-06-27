@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -27,6 +28,7 @@ from coductor.domain.enums import (
 )
 from coductor.prompts.renderer import render_worker_prompt
 from coductor.services.evidence_service import EvidenceService
+from coductor.services.usage import usage_from_backend
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
 
@@ -66,13 +68,21 @@ class ReviewDeliveryService:
             workspace_path=self.root.as_posix(),
             sandbox=SandboxMode.READ_ONLY,
         )
+        started_at = time.monotonic()
         handle = self.backend.start_worker(request)
         result = self.backend.continue_worker(handle, request)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
         data = parse_review_summary(
             result.summary,
             reviewer_thread_id=result.thread_id,
             reviewed_base_commit=gate_report.data.base_commit,
             reviewed_head_commit=gate_report.data.head_commit,
+        )
+        data.usage = usage_from_backend(
+            result.usage,
+            prompt=request.prompt,
+            summary=result.summary,
+            duration_ms=duration_ms,
         )
         envelope = self.artifacts.envelope(
             run_id=run_id,

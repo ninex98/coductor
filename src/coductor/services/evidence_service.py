@@ -16,8 +16,11 @@ from coductor.artifacts.models import (
     ReviewReportData,
     ReviewSummary,
     Rollback,
+    WorkerUsage,
 )
+from coductor.artifacts.serializer import load_yaml
 from coductor.domain.enums import ExecutionStrategy
+from coductor.services.usage import combine_usage
 
 
 class EvidenceCompletenessValidator:
@@ -48,6 +51,7 @@ class EvidenceService:
         required = [gate for gate in gate_report.gates if gate.required]
         passed = [gate for gate in required if gate.status == "passed"]
         failed = [gate for gate in required if gate.status != "passed"]
+        usage_summary = combine_usage([*_artifact_usages(run_dir), review.usage])
         evidence_files: list[EvidenceFile] = []
         for task_id in completed_tasks:
             patch_path = run_dir / f"tasks/{task_id}/patch.diff"
@@ -82,6 +86,7 @@ class EvidenceService:
                 failed=len(failed),
             ),
             review_summary=ReviewSummary(blocking_findings=review.blocking_findings),
+            usage_summary=usage_summary,
             evidence_files=evidence_files,
             known_risks=[] if not failed else ["存在未通过的必需质量门"],
             manual_checks=[],
@@ -115,6 +120,15 @@ class EvidenceService:
             "- Evidence validation: "
             f"{'valid' if evidence.validation.valid else 'invalid'}",
             "",
+            "## Run Metrics",
+            f"- Duration: {_format_duration(evidence.usage_summary.duration_ms)}",
+            "- Tokens: "
+            f"input {_format_int(evidence.usage_summary.input_tokens)} / "
+            f"output {_format_int(evidence.usage_summary.output_tokens)} / "
+            f"total {_format_int(evidence.usage_summary.total_tokens)}"
+            f"{' (estimated)' if evidence.usage_summary.estimated else ''}",
+            f"- Estimated cost: {_format_cost(evidence.usage_summary.estimated_cost_usd)}",
+            "",
             "## Evidence Files",
         ]
         if evidence.evidence_files:
@@ -139,3 +153,40 @@ def _patch_has_changes(path: Path) -> bool:
         or content.startswith("--- ")
         or "GIT binary patch" in content
     )
+
+
+def _artifact_usages(run_dir: Path) -> list[WorkerUsage]:
+    paths = [
+        *sorted((run_dir / "tasks").glob("*/worker_result.yaml")),
+        *sorted((run_dir / "repairs").glob("*/repair_result.yaml")),
+    ]
+    usages: list[WorkerUsage] = []
+    for path in paths:
+        if usage := _usage_from_artifact(path):
+            usages.append(usage)
+    return usages
+
+
+def _usage_from_artifact(path: Path) -> WorkerUsage | None:
+    payload = load_yaml(path.read_text(encoding="utf-8"))
+    data = payload.get("data", {})
+    if not isinstance(data, dict):
+        return None
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    return WorkerUsage.model_validate(usage)
+
+
+def _format_duration(duration_ms: int | None) -> str:
+    if duration_ms is None:
+        return "unknown"
+    return f"{duration_ms} ms"
+
+
+def _format_int(value: int | None) -> str:
+    return "unknown" if value is None else str(value)
+
+
+def _format_cost(value: float | None) -> str:
+    return "unknown" if value is None else f"${value:.6f}"

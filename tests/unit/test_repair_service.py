@@ -2,12 +2,23 @@ from __future__ import annotations
 
 from coductor.artifacts.models import GateReportData, GateResultData
 from coductor.artifacts.repository import ArtifactRepository
-from coductor.backends.base import WorkerHandle
+from coductor.artifacts.serializer import load_yaml
+from coductor.backends.base import BackendUsage, WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ArtifactStatus, ArtifactType
 from coductor.services.repair_service import RepairService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
+
+
+class UsageRepairBackend(FakeCodingBackend):
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        return WorkerResult(
+            worker_id=request.worker_id,
+            thread_id=handle.thread_id,
+            summary="repair complete",
+            usage=BackendUsage(input_tokens=20, output_tokens=4, estimated=False),
+        )
 
 
 def test_repair_service_writes_repair_request_and_result(tmp_path):
@@ -41,7 +52,7 @@ def test_repair_service_writes_repair_request_and_result(tmp_path):
         ),
     )
     repo.write("05_gate_report.yaml", gate_report)
-    service = RepairService(tmp_path, config, FakeCodingBackend(), writer)
+    service = RepairService(tmp_path, config, UsageRepairBackend(), writer)
 
     service.repair(
         repo,
@@ -54,3 +65,10 @@ def test_repair_service_writes_repair_request_and_result(tmp_path):
 
     assert (tmp_path / "repairs/R001/repair_request.yaml").exists()
     assert (tmp_path / "repairs/R001/repair_result.yaml").exists()
+    repair_result = load_yaml(
+        (tmp_path / "repairs/R001/repair_result.yaml").read_text(encoding="utf-8")
+    )
+    assert repair_result["data"]["usage"]["input_tokens"] == 20
+    assert repair_result["data"]["usage"]["output_tokens"] == 4
+    assert repair_result["data"]["usage"]["total_tokens"] == 24
+    assert repair_result["data"]["usage"]["estimated"] is False

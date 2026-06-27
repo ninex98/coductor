@@ -192,6 +192,10 @@ class FileReference(StrictModel):
 class WorkerUsage(StrictModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
+    total_tokens: int | None = None
+    duration_ms: int | None = None
+    estimated: bool = True
+    estimated_cost_usd: float | None = None
 
 
 class WorkerResultData(StrictModel):
@@ -277,6 +281,7 @@ class ReviewReportData(StrictModel):
     blocking_findings: int = 0
     verdict: Literal["pass", "fail"] = "pass"
     requires_repair: bool = False
+    usage: WorkerUsage = Field(default_factory=WorkerUsage)
 
     @field_validator("blocking_findings")
     @classmethod
@@ -328,6 +333,7 @@ class EvidenceBundleData(StrictModel):
     acceptance_results: list[AcceptanceCoverage] = Field(default_factory=list)
     gate_summary: GateSummary
     review_summary: ReviewSummary
+    usage_summary: WorkerUsage = Field(default_factory=WorkerUsage)
     evidence_files: list[EvidenceFile] = Field(default_factory=list)
     validation: EvidenceValidation = Field(default_factory=EvidenceValidation)
     known_risks: list[str] = Field(default_factory=list)
