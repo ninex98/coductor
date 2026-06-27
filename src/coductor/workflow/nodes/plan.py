@@ -38,6 +38,10 @@ def create_execution_plan_node(
             state.status = RunStatus.HUMAN_REQUIRED
             state.current_stage = "human_required"
             state.last_error = "plan validation failed"
+        elif plan.data.approval.required and not plan.data.approval.approved_by:
+            state.status = RunStatus.HUMAN_REQUIRED
+            state.current_stage = "human_required"
+            state.last_error = "parallel plan approval required"
         context.save(state)
         patch: dict[str, Any] = {
             "current_stage": "create_execution_plan",

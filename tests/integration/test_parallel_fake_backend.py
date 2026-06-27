@@ -69,9 +69,11 @@ class BlockingParallelBackend(FakeCodingBackend):
 
 
 def test_parallel_fake_backend_merges_safe_tasks(tmp_path: Path) -> None:
+    config = _passing_config()
+    config.workflow.require_plan_approval_for_parallel = False
     result = RunService(
         tmp_path,
-        _passing_config(),
+        config,
         backend=FakeCodingBackend(),
     ).run(
         "并行更新文档和示例",
@@ -104,9 +106,12 @@ def test_parallel_git_repo_records_worktree_diffs(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
 
+    config = _passing_config()
+    config.workflow.require_plan_approval_for_parallel = False
+
     result = RunService(
         tmp_path,
-        _passing_config(),
+        config,
         backend=FakeCodingBackend(),
     ).run(
         "并行更新文档和示例",
@@ -119,6 +124,24 @@ def test_parallel_git_repo_records_worktree_diffs(tmp_path: Path) -> None:
     assert integration["data"]["status"] == "merged"
     assert integration["data"]["worktree_diffs"]
     assert integration["data"]["worktree_diffs"][0]["path"].endswith(".diff")
+
+
+def test_parallel_plan_requires_approval_before_dispatch(tmp_path: Path) -> None:
+    result = RunService(
+        tmp_path,
+        _passing_config(),
+        backend=FakeCodingBackend(),
+    ).run(
+        "并行更新文档和示例",
+        mode=ExecutionMode.PARALLEL,
+    )
+
+    assert result.status == RunStatus.HUMAN_REQUIRED
+    assert "parallel plan approval required" in result.message
+    run_dir = Path(result.run_dir)
+    plan = load_yaml((run_dir / "03_execution_plan.yaml").read_text(encoding="utf-8"))
+    assert plan["data"]["approval"]["required"] is True
+    assert not (run_dir / "tasks/T001/task.yaml").exists()
 
 
 def test_parallel_git_repo_runs_builders_in_isolated_worktrees(tmp_path: Path) -> None:
@@ -137,10 +160,12 @@ def test_parallel_git_repo_runs_builders_in_isolated_worktrees(tmp_path: Path) -
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
     backend = RecordingFakeBackend()
+    config = _passing_config()
+    config.workflow.require_plan_approval_for_parallel = False
 
     result = RunService(
         tmp_path,
-        _passing_config(),
+        config,
         backend=backend,
     ).run(
         "并行更新文档和示例",
@@ -174,6 +199,7 @@ def test_parallel_git_repo_runs_ready_tasks_concurrently(tmp_path: Path) -> None
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
     config = _passing_config()
+    config.workflow.require_plan_approval_for_parallel = False
     config.workflow.max_parallel_workers = 2
     backend = BlockingParallelBackend(expected_builders=2)
 

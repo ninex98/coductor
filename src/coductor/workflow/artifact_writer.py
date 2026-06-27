@@ -187,6 +187,11 @@ class WorkflowArtifactWriter:
                 snapshot.data,
                 quality_gate_ids=[gate.id for gate in self.config.quality_gates],
             )
+        if (
+            data.strategy == ExecutionStrategy.PARALLEL
+            and self.config.workflow.require_plan_approval_for_parallel
+        ):
+            data.approval.required = True
         envelope = self.envelope(
             run_id=run_id,
             artifact_type=ArtifactType.EXECUTION_PLAN,
