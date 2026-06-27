@@ -134,6 +134,49 @@ def test_resume_continues_from_checkpoint_stage_without_rewriting_goal(
     assert (run_dir / "07_evidence.yaml").exists()
 
 
+def test_resume_reuses_existing_spec_when_checkpoint_starts_at_draft_spec(
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_spec_stage_resume_000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    repo = ArtifactRepository(run_dir)
+    goal = service.artifacts.write_goal(
+        repo,
+        run_id,
+        "从 draft_spec 阶段继续",
+        service.config.workflow.default_mode,
+    )
+    snapshot = service.artifacts.write_snapshot(repo, run_id, goal)
+    service.artifacts.write_spec(repo, run_id, goal, snapshot)
+    original_spec = (run_dir / "02_spec.yaml").read_text(encoding="utf-8")
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="draft_spec",
+            raw_goal="从 draft_spec 阶段继续",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+            artifacts={
+                "00_goal": "00_goal.yaml",
+                "01_repository_snapshot": "01_repository_snapshot.yaml",
+                "02_spec": "02_spec.yaml",
+            },
+        )
+    )
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert (run_dir / "02_spec.yaml").read_text(encoding="utf-8") == original_spec
+    assert (run_dir / "07_evidence.yaml").exists()
+
+
 def test_resume_does_not_continue_paused_run(tmp_path: Path) -> None:
     config = CoductorConfig.default()
     config.backend.provider = "fake"

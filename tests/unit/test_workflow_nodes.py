@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from coductor.artifacts.models import GateReportData, GateResultData
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle
@@ -23,6 +25,25 @@ from coductor.workflow.nodes.specify import draft_spec_node
 from coductor.workflow.nodes.verify import run_quality_gates_node
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
+
+
+def _runtime_context(
+    tmp_path: Path,
+    run_id: str,
+) -> tuple[
+    Path,
+    ArtifactRepository,
+    WorkflowArtifactWriter,
+    WorkflowCheckpointStore,
+    WorkflowRuntimeContext,
+]:
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    writer = WorkflowArtifactWriter(tmp_path, CoductorConfig.default())
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
+    return run_dir, repo, writer, checkpoints, context
 
 
 def test_front_half_nodes_record_stage_and_artifact_paths() -> None:
@@ -214,6 +235,130 @@ def test_create_execution_plan_node_writes_plan_when_runtime_context_is_present(
         "artifacts": {"03_execution_plan": "03_execution_plan.yaml"},
     }
     assert repo.read("03_execution_plan.yaml", ArtifactType.EXECUTION_PLAN)
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["03_execution_plan"] == "03_execution_plan.yaml"
+    assert saved.current_stage == "create_execution_plan"
+
+
+def test_collect_goal_node_reuses_existing_goal_artifact_when_resuming(tmp_path) -> None:
+    run_id = "run_existing_goal_0000000000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    writer.write_goal(repo, run_id, "原始目标", ExecutionMode.AUTO)
+    original_goal = (run_dir / "00_goal.yaml").read_text(encoding="utf-8")
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="新的目标不应覆盖已有 artifact",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = collect_goal_node(state, context=context)
+
+    assert patch == {
+        "current_stage": "inspect_repository",
+        "artifacts": {"00_goal": "00_goal.yaml"},
+    }
+    assert (run_dir / "00_goal.yaml").read_text(encoding="utf-8") == original_goal
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["00_goal"] == "00_goal.yaml"
+    assert saved.current_stage == "inspect_repository"
+
+
+def test_inspect_repository_node_reuses_existing_snapshot_artifact_when_resuming(
+    tmp_path,
+) -> None:
+    run_id = "run_existing_snapshot_0000000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    goal = writer.write_goal(repo, run_id, "修复示例函数", ExecutionMode.AUTO)
+    writer.write_snapshot(repo, run_id, goal)
+    original_snapshot = (run_dir / "01_repository_snapshot.yaml").read_text(
+        encoding="utf-8"
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = inspect_repository_node(state, context=context, goal=goal)
+
+    assert patch == {
+        "current_stage": "draft_spec",
+        "artifacts": {"01_repository_snapshot": "01_repository_snapshot.yaml"},
+    }
+    assert (
+        run_dir / "01_repository_snapshot.yaml"
+    ).read_text(encoding="utf-8") == original_snapshot
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["01_repository_snapshot"] == "01_repository_snapshot.yaml"
+    assert saved.current_stage == "draft_spec"
+
+
+def test_draft_spec_node_reuses_existing_spec_artifact_when_resuming(tmp_path) -> None:
+    run_id = "run_existing_spec_0000000000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    goal = writer.write_goal(repo, run_id, "修复示例函数", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, run_id, goal)
+    writer.write_spec(repo, run_id, goal, snapshot)
+    original_spec = (run_dir / "02_spec.yaml").read_text(encoding="utf-8")
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = draft_spec_node(state, context=context, goal=goal, snapshot=snapshot)
+
+    assert patch == {
+        "current_stage": "create_execution_plan",
+        "artifacts": {"02_spec": "02_spec.yaml"},
+    }
+    assert (run_dir / "02_spec.yaml").read_text(encoding="utf-8") == original_spec
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["02_spec"] == "02_spec.yaml"
+    assert saved.current_stage == "create_execution_plan"
+
+
+def test_create_execution_plan_node_reuses_existing_plan_artifact_when_resuming(
+    tmp_path,
+) -> None:
+    run_id = "run_existing_plan_0000000000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    goal = writer.write_goal(repo, run_id, "修复示例函数", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, run_id, goal)
+    spec = writer.write_spec(repo, run_id, goal, snapshot)
+    writer.write_plan(repo, run_id, spec, snapshot, ExecutionMode.AUTO)
+    original_plan = (run_dir / "03_execution_plan.yaml").read_text(encoding="utf-8")
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="parallel",
+        run_dir=run_dir.as_posix(),
+    )
+
+    patch = create_execution_plan_node(
+        state,
+        context=context,
+        spec=spec,
+        snapshot=snapshot,
+        requested_mode=ExecutionMode.PARALLEL,
+    )
+
+    assert patch == {
+        "current_stage": "create_execution_plan",
+        "artifacts": {"03_execution_plan": "03_execution_plan.yaml"},
+    }
+    assert (run_dir / "03_execution_plan.yaml").read_text(encoding="utf-8") == original_plan
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.artifacts["03_execution_plan"] == "03_execution_plan.yaml"

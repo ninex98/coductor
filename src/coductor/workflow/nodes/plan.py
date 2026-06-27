@@ -6,10 +6,11 @@ from typing import Any
 
 from coductor.artifacts.models import (
     ArtifactEnvelope,
+    ExecutionPlanData,
     RepositorySnapshotData,
     SpecificationData,
 )
-from coductor.domain.enums import ExecutionMode, RunStatus
+from coductor.domain.enums import ArtifactType, ExecutionMode, RunStatus
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
 
@@ -25,13 +26,21 @@ def create_execution_plan_node(
     if context is not None:
         if spec is None or snapshot is None:
             raise ValueError("create_execution_plan_node requires spec and snapshot artifacts")
-        plan = context.artifacts.write_plan(
-            context.repo,
-            state.run_id,
-            spec,
-            snapshot,
-            requested_mode or context.requested_mode(state),
-        )
+        plan_path = "03_execution_plan.yaml"
+        if (context.repo.root / plan_path).exists():
+            plan = ArtifactEnvelope[ExecutionPlanData].model_validate(
+                context.repo.read(plan_path, ArtifactType.EXECUTION_PLAN).model_dump(
+                    mode="json"
+                )
+            )
+        else:
+            plan = context.artifacts.write_plan(
+                context.repo,
+                state.run_id,
+                spec,
+                snapshot,
+                requested_mode or context.requested_mode(state),
+            )
         state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
         state.current_stage = "create_execution_plan"
         if not plan.data.validation.valid:
