@@ -190,6 +190,23 @@ def test_web_action_rejects_locked_run_without_side_effects(tmp_path: Path, monk
     assert not (run_dir / "08_release_manifest.yaml").exists()
 
 
+def test_web_resume_rejects_run_dir_outside_project_runs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.upsert_run("run_abc", "running", outside.as_posix(), "2026-06-24T00:00:00Z")
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+
+    response = app.handle("POST", "/api/runs/run_abc/actions/resume", headers=_action_headers())
+
+    assert response.status == 400
+    assert "outside project runs directory" in response.body["error"]["message"]
+
+
 def test_web_action_rejects_missing_control_token(tmp_path: Path, monkeypatch) -> None:
     _seed_basic_run(tmp_path, status="running")
     monkeypatch.chdir(tmp_path)

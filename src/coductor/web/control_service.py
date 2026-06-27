@@ -137,6 +137,7 @@ class ConsoleControlService:
             self.db.release_run_lock(run_id, owner)
 
     def _resume(self, run_id: str) -> ConsoleActionResult:
+        self._run_context(run_id, "resume")
         try:
             result = RunService(self.root, load_config(self.root)).resume(run_id)
         except CoductorError as error:
