@@ -8,10 +8,13 @@ import pytest
 from typer.testing import CliRunner
 
 from coductor import cli
+from coductor.backends.fake import FakeCodingBackend
 from coductor.cli import app
-from coductor.domain.enums import RunStatus
+from coductor.config.models import CoductorConfig, QualityGateConfig
+from coductor.domain.enums import ExecutionMode, RunStatus
 from coductor.domain.models import RunResult
 from coductor.exceptions import BackendUnavailableError
+from coductor.services.run_service import RunService
 from coductor.storage.database import Database
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.state import WorkflowState
@@ -436,6 +439,50 @@ def test_cli_control_commands_update_status_and_log_event(
     assert row["status"] == status
     events = db.list_events("run_abc")
     assert events[-1]["stage"] == command
+
+
+def test_cli_approve_marks_parallel_plan_and_resume_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = [
+        QualityGateConfig(
+            id="unit_tests",
+            command=f"{sys.executable} -c 'print(1)'",
+            required=True,
+            timeout_seconds=30,
+        )
+    ]
+    first = RunService(
+        tmp_path,
+        config,
+        backend=FakeCodingBackend(),
+    ).run(
+        "并行更新文档和示例",
+        mode=ExecutionMode.PARALLEL,
+    )
+    assert first.status == RunStatus.HUMAN_REQUIRED
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    approved = cli_runner.invoke(app, ["approve", first.run_id])
+
+    assert approved.exit_code == 0
+    run_dir = Path(first.run_dir)
+    plan = (run_dir / "03_execution_plan.yaml").read_text(encoding="utf-8")
+    assert "approved_by: cli" in plan
+    resumed_config = CoductorConfig.default()
+    resumed_config.backend.provider = "fake"
+    resumed_config.quality_gates = config.quality_gates
+    resumed = RunService(
+        tmp_path,
+        resumed_config,
+        backend=FakeCodingBackend(),
+    ).resume(first.run_id)
+    assert resumed.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert (run_dir / "07_evidence.yaml").exists()
 
 
 def test_cli_verify_reruns_quality_gates_and_updates_status(

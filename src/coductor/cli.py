@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Annotated, Any
 
-from coductor.artifacts.models import ArtifactEnvelope, GateReportData, GoalData
+from coductor.artifacts.models import ArtifactEnvelope, ExecutionPlanData, GateReportData, GoalData
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.serializer import dump_yaml
 from coductor.backends.factory import create_backend
@@ -23,6 +23,9 @@ from coductor.services.run_service import RunService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
+from coductor.workflow.checkpoint import WorkflowCheckpointStore
+from coductor.workflow.langgraph_checkpoint import LangGraphCheckpointStore
+from coductor.workflow.state import WorkflowState
 
 try:  # pragma: no cover - fallback keeps local smoke checks useful without dependencies
     import typer
@@ -329,6 +332,10 @@ def control_run(run_id: str, command: str) -> None:
         _rerun_review(root, db, run_id)
         _print(service.control_result(run_id, command))
         return
+    if command == "approve":
+        _approve_run(root, db, run_id)
+        _print(service.control_result(run_id, command))
+        return
     status = CONTROL_STATUS[command]
     now = _utc_now()
     db.update_run_status(run_id, status, now)
@@ -354,6 +361,51 @@ def verify_run(run_id: str) -> None:
 
 def review_run(run_id: str) -> None:
     control_run(run_id, "review")
+
+
+def _approve_run(root: Path, db: Database, run_id: str) -> None:
+    row = db.get_run(run_id)
+    if row is None:
+        return
+    repo = ArtifactRepository(Path(row["run_dir"]))
+    plan_path = repo.root / "03_execution_plan.yaml"
+    now = _utc_now()
+    if not plan_path.exists():
+        db.update_run_status(run_id, CONTROL_STATUS["approve"], now)
+        db.add_event(run_id, "approve", "approve requested by cli", now)
+        return
+    plan = ArtifactEnvelope[ExecutionPlanData].model_validate(
+        repo.read("03_execution_plan.yaml", ArtifactType.EXECUTION_PLAN).model_dump(mode="json")
+    )
+    if not plan.data.approval.required:
+        db.update_run_status(run_id, CONTROL_STATUS["approve"], now)
+        db.add_event(run_id, "approve", "approve requested by cli", now)
+        return
+    plan.data.approval.approved_by = "cli"
+    repo.write_next_revision("03_execution_plan.yaml", plan)
+    db.update_run_status(run_id, RunStatus.RUNNING, now)
+    db.add_event(run_id, "approve", "parallel plan approved by cli", now)
+    state = _approval_resume_state(db, root, run_id, row["run_dir"])
+    WorkflowCheckpointStore(db, root / CODUCTOR_DIR / "runs").save(state, now)
+    LangGraphCheckpointStore(db.path).save(state)
+
+
+def _approval_resume_state(
+    db: Database,
+    root: Path,
+    run_id: str,
+    run_dir: str,
+) -> WorkflowState:
+    current = LangGraphCheckpointStore(db.path).load(run_id)
+    if current is None:
+        current = WorkflowCheckpointStore(db, root / CODUCTOR_DIR / "runs").load(run_id)
+    state = current or WorkflowState(run_id=run_id)
+    state.status = RunStatus.RUNNING
+    state.current_stage = "validate_execution_plan"
+    state.last_error = None
+    state.run_dir = run_dir
+    state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
+    return state
 
 
 def _rerun_verification(root: Path, db: Database, run_id: str) -> None:
