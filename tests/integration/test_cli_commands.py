@@ -280,6 +280,23 @@ def test_cli_artifacts_includes_checkpoint_summary(
     assert "00_goal.yaml" in result.output
 
 
+def test_cli_artifacts_rejects_run_dir_outside_project_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.upsert_run("run_abc", "running", outside.as_posix(), "2026-06-24T00:00:00Z")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["artifacts", "run_abc"])
+
+    assert result.exit_code == 1
+    assert "outside project runs directory" in result.output
+
+
 def test_cli_logs_lists_run_events(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -680,7 +697,13 @@ def test_cli_review_reruns_review_and_evidence(
     from coductor.artifacts.models import GateReportData, Producer
     from coductor.artifacts.repository import ArtifactRepository
     from coductor.config.models import CoductorConfig
-    from coductor.domain.enums import ArtifactStatus, ArtifactType, ExecutionMode, ProducerKind
+    from coductor.domain.enums import (
+        ArtifactStatus,
+        ArtifactType,
+        ExecutionMode,
+        ExecutionStrategy,
+        ProducerKind,
+    )
     from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
     (tmp_path / "coductor.yaml").write_text(
@@ -689,7 +712,11 @@ def test_cli_review_reruns_review_and_evidence(
     )
     repo = ArtifactRepository(run_dir)
     writer = WorkflowArtifactWriter(tmp_path, CoductorConfig.default())
-    writer.write_goal(repo, "run_abc", "修复示例函数", ExecutionMode.AUTO)
+    goal = writer.write_goal(repo, "run_abc", "先定义 schema 再实现功能", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.PIPELINE)
+    assert plan.data.strategy == ExecutionStrategy.PIPELINE
     (run_dir / "tasks/T001/patch.diff").write_text(
         "diff --git a/math_utils.py b/math_utils.py\n",
         encoding="utf-8",
@@ -720,6 +747,7 @@ def test_cli_review_reruns_review_and_evidence(
     assert (run_dir / "07_evidence.yaml").exists()
     evidence = (run_dir / "07_evidence.yaml").read_text(encoding="utf-8")
     assert "final_status: ready_for_human_review" in evidence
+    assert "strategy_used: pipeline" in evidence
     db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
     row = db.get_run("run_abc")
     assert row is not None

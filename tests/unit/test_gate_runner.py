@@ -26,6 +26,30 @@ def test_gate_runner_records_failure_fingerprint(tmp_path: Path) -> None:
     assert (tmp_path / report.gates[0].stdout_path).exists()
 
 
+def test_gate_runner_redacts_sensitive_output_logs(tmp_path: Path) -> None:
+    gate = QualityGate(
+        id="secrets",
+        stage="final",
+        command=(
+            f"{sys.executable} -c 'import sys; "
+            'print("OPENAI_API_KEY=sk-test-secret"); '
+            'print("Authorization: Bearer bearer-secret", file=sys.stderr); '
+            "sys.exit(1)'"
+        ),
+        required=True,
+        timeout_seconds=30,
+    )
+
+    report = GateRunner(tmp_path).run([gate])
+
+    stdout = (tmp_path / report.gates[0].stdout_path).read_text(encoding="utf-8")
+    stderr = (tmp_path / report.gates[0].stderr_path).read_text(encoding="utf-8")
+    assert "sk-test-secret" not in stdout
+    assert "bearer-secret" not in stderr
+    assert "OPENAI_API_KEY=[REDACTED]" in stdout
+    assert "Authorization: Bearer [REDACTED]" in stderr
+
+
 def test_gate_runner_marks_all_required_passed(tmp_path: Path) -> None:
     gate = QualityGate(
         id="unit_tests",

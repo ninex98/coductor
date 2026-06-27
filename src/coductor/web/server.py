@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import secrets
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,6 +36,7 @@ def serve_console(
     allow_lan: bool = False,
 ) -> None:
     validate_serve_options(host=host, allow_lan=allow_lan)
+    control_token = secrets.token_urlsafe(32)
     url = f"http://{host}:{port}"
     print(f"Coductor local console {VERSION}")
     print(f"Project root: {root}")
@@ -43,7 +45,7 @@ def serve_console(
     if open_browser:
         webbrowser.open(url)
     try:
-        server = create_http_server(root, host=host, port=port)
+        server = create_http_server(root, host=host, port=port, control_token=control_token)
     except OSError as error:
         raise ServeOptionsError(
             f"failed to bind local console on {host}:{port}: {error}"
@@ -56,9 +58,10 @@ def create_http_server(
     *,
     host: str = "127.0.0.1",
     port: int = 8765,
+    control_token: str | None = None,
     bind_and_activate: bool = True,
 ) -> ThreadingHTTPServer:
-    app = create_app(root)
+    app = create_app(root, control_token=control_token)
 
     class Handler(LocalConsoleRequestHandler):
         console_app = app
@@ -79,7 +82,7 @@ class LocalConsoleRequestHandler(BaseHTTPRequestHandler):
     console_app: LocalConsoleApp
 
     def do_GET(self) -> None:  # noqa: N802
-        response = self.console_app.handle("GET", self.path)
+        response = self.console_app.handle("GET", self.path, headers=dict(self.headers.items()))
         self.send_response(response.status)
         self.send_header("Content-Type", response.content_type)
         self.send_header("Cache-Control", "no-store")
@@ -87,7 +90,7 @@ class LocalConsoleRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(response.bytes)
 
     def do_POST(self) -> None:  # noqa: N802
-        response = self.console_app.handle("POST", self.path)
+        response = self.console_app.handle("POST", self.path, headers=dict(self.headers.items()))
         self.send_response(response.status)
         self.send_header("Content-Type", response.content_type)
         self.send_header("Cache-Control", "no-store")

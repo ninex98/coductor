@@ -157,8 +157,21 @@ def test_local_console_api_reads_artifact_and_rejects_path_escape(tmp_path: Path
     assert "traversal" in escaped.body["error"]["message"]
 
 
-def test_local_console_serves_static_assets(tmp_path: Path) -> None:
+def test_local_console_rejects_run_dir_outside_project_runs(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.upsert_run("run_abc", "running", outside.as_posix(), "2026-06-24T00:00:00Z")
     app = create_app(tmp_path)
+
+    response = app.handle("GET", "/api/runs/run_abc")
+
+    assert response.status == 400
+    assert "outside project runs directory" in response.body["error"]["message"]
+
+
+def test_local_console_serves_static_assets(tmp_path: Path) -> None:
+    app = create_app(tmp_path, control_token="console-token")
 
     index = app.handle("GET", "/")
     css = app.handle("GET", "/static/styles.css")
@@ -166,6 +179,8 @@ def test_local_console_serves_static_assets(tmp_path: Path) -> None:
 
     assert index.status == 200
     assert 'id="app"' in index.text
+    assert 'name="coductor-control-token"' in index.text
+    assert 'content="console-token"' in index.text
     assert 'data-tab="logs"' in index.text
     assert 'data-tab="evidence"' in index.text
     assert 'data-tab="release"' in index.text

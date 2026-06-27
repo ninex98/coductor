@@ -59,3 +59,19 @@ def test_read_text_preview_truncates_large_files(tmp_path: Path) -> None:
 
     assert len(preview) == 512_000
     assert truncated is True
+
+
+def test_read_text_preview_redacts_sensitive_values(tmp_path: Path) -> None:
+    path = tmp_path / "gate.log"
+    path.write_text(
+        "Authorization: Bearer bearer-secret\npassword=plain-secret\n",
+        encoding="utf-8",
+    )
+
+    preview, truncated = read_text_preview(path)
+
+    assert truncated is False
+    assert "bearer-secret" not in preview
+    assert "plain-secret" not in preview
+    assert "Authorization: Bearer [REDACTED]" in preview
+    assert "password=[REDACTED]" in preview

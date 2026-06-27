@@ -136,7 +136,7 @@ def _utc_now() -> str:
 
 
 def _report_service(root: Path) -> ReportService:
-    return ReportService(_db(root))
+    return ReportService(_db(root), root=root)
 
 
 def _exit_with_report_error(service: ReportService, error: RunReportError) -> None:
@@ -373,7 +373,7 @@ def explain_run(run_id: str) -> None:
 def control_run(run_id: str, command: str) -> None:
     root = _root(".")
     db = _db(root)
-    service = ReportService(db)
+    service = ReportService(db, root=root)
     try:
         service.run_context(run_id, command)
     except RunReportError as error:
@@ -444,7 +444,7 @@ def review_run(run_id: str) -> None:
 def release_run(run_id: str) -> None:
     root = _root(".")
     db = _db(root)
-    service = ReportService(db)
+    service = ReportService(db, root=root)
     try:
         row = service.run_context(run_id, "release")
     except RunReportError as error:
@@ -649,6 +649,7 @@ def _rerun_review(root: Path, db: Database, run_id: str) -> None:
     gate_report = ArtifactEnvelope[GateReportData].model_validate(
         repo.read("05_gate_report.yaml", ArtifactType.GATE_REPORT).model_dump(mode="json")
     )
+    strategy = _execution_strategy_for_review(repo)
     completed_task_ids = _completed_task_ids_for_review(repo)
     review = delivery.review(repo, run_id, gate_report, completed_task_ids)
     evidence = delivery.evidence(
@@ -657,7 +658,7 @@ def _rerun_review(root: Path, db: Database, run_id: str) -> None:
         goal,
         gate_report,
         review,
-        ExecutionStrategy.SOLO,
+        strategy,
         completed_task_ids,
     )
     status = (
@@ -668,6 +669,18 @@ def _rerun_review(root: Path, db: Database, run_id: str) -> None:
     now = _utc_now()
     db.update_run_status(run_id, status, now)
     db.add_event(run_id, "review", "independent review rerun by cli", now)
+
+
+def _execution_strategy_for_review(repo: ArtifactRepository) -> ExecutionStrategy:
+    plan_path = repo.root / "03_execution_plan.yaml"
+    if not plan_path.exists():
+        return ExecutionStrategy.SOLO
+    plan = ArtifactEnvelope[ExecutionPlanData].model_validate(
+        repo.read("03_execution_plan.yaml", ArtifactType.EXECUTION_PLAN).model_dump(
+            mode="json"
+        )
+    )
+    return ExecutionStrategy(plan.data.strategy)
 
 
 def _completed_task_ids_for_review(repo: ArtifactRepository) -> list[str]:

@@ -8,8 +8,18 @@ const state = {
   notice: null,
 };
 
+const controlToken =
+  document.querySelector('meta[name="coductor-control-token"]')?.getAttribute("content") || "";
+
 async function fetchJson(path, options = {}) {
-  const response = await fetch(path, options);
+  const requestOptions = { ...options };
+  if (requestOptions.method === "POST" && controlToken) {
+    requestOptions.headers = {
+      ...(requestOptions.headers || {}),
+      "X-Coductor-Token": controlToken,
+    };
+  }
+  const response = await fetch(path, requestOptions);
   const payload = await response.json();
   if (!payload.ok) {
     const message = payload.error?.message || "Request failed";

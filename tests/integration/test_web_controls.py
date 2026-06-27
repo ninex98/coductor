@@ -22,7 +22,21 @@ from coductor.domain.enums import (
 )
 from coductor.services.evidence_service import EvidenceCompletenessValidator
 from coductor.storage.database import Database
-from coductor.web.app import create_app
+from coductor.web.app import LocalConsoleApp, create_app
+
+CONTROL_TOKEN = "test-control-token"
+
+
+def _app(root: Path) -> LocalConsoleApp:
+    return create_app(root, control_token=CONTROL_TOKEN)
+
+
+def _action_headers(*, origin: str = "http://127.0.0.1:8765") -> dict[str, str]:
+    return {
+        "Host": "127.0.0.1:8765",
+        "Origin": origin,
+        "X-Coductor-Token": CONTROL_TOKEN,
+    }
 
 
 def _seed_basic_run(root: Path, *, status: str = "running", run_id: str = "run_abc") -> Path:
@@ -92,9 +106,9 @@ def _seed_ready_release_run(root: Path) -> Path:
 def test_web_action_pause_updates_status(tmp_path: Path, monkeypatch) -> None:
     _seed_basic_run(tmp_path, status="running")
     monkeypatch.chdir(tmp_path)
-    app = create_app(tmp_path)
+    app = _app(tmp_path)
 
-    response = app.handle("POST", "/api/runs/run_abc/actions/pause")
+    response = app.handle("POST", "/api/runs/run_abc/actions/pause", headers=_action_headers())
 
     assert response.status == 200
     assert response.body["data"]["status"] == "paused"
@@ -105,9 +119,9 @@ def test_web_action_pause_updates_status(tmp_path: Path, monkeypatch) -> None:
 def test_web_action_release_writes_manifest(tmp_path: Path, monkeypatch) -> None:
     run_dir = _seed_ready_release_run(tmp_path)
     monkeypatch.chdir(tmp_path)
-    app = create_app(tmp_path)
+    app = _app(tmp_path)
 
-    response = app.handle("POST", "/api/runs/run_abc/actions/release")
+    response = app.handle("POST", "/api/runs/run_abc/actions/release", headers=_action_headers())
 
     assert response.status == 200
     assert response.body["data"]["status"] == "ready_for_human_review"
@@ -119,11 +133,44 @@ def test_web_action_rejects_locked_run_without_side_effects(tmp_path: Path, monk
     db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
     assert db.acquire_run_lock("run_abc", "other-owner")
     monkeypatch.chdir(tmp_path)
-    app = create_app(tmp_path)
+    app = _app(tmp_path)
 
-    response = app.handle("POST", "/api/runs/run_abc/actions/pause")
+    response = app.handle("POST", "/api/runs/run_abc/actions/pause", headers=_action_headers())
 
     assert response.status == 409
     assert "already locked" in response.body["error"]["message"]
     assert db.get_run("run_abc")["status"] == "running"
     assert not (run_dir / "08_release_manifest.yaml").exists()
+
+
+def test_web_action_rejects_missing_control_token(tmp_path: Path, monkeypatch) -> None:
+    _seed_basic_run(tmp_path, status="running")
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+
+    response = app.handle("POST", "/api/runs/run_abc/actions/pause")
+
+    assert response.status == 403
+    assert "control token" in response.body["error"]["message"]
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    assert db.get_run("run_abc")["status"] == "running"
+
+
+def test_web_action_rejects_cross_origin_even_with_control_token(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_basic_run(tmp_path, status="running")
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+
+    response = app.handle(
+        "POST",
+        "/api/runs/run_abc/actions/pause",
+        headers=_action_headers(origin="http://evil.example"),
+    )
+
+    assert response.status == 403
+    assert "origin" in response.body["error"]["message"].lower()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    assert db.get_run("run_abc")["status"] == "running"

@@ -13,6 +13,7 @@ from coductor.artifacts.models import (
     GateReportData,
     Producer,
     RepairRequestData,
+    TaskData,
     WorkerResultData,
 )
 from coductor.artifacts.repository import ArtifactRepository
@@ -60,6 +61,10 @@ class RepairService:
             sdk_available=is_codex_sdk_available(),
         ).supports_resume_thread
         resume_thread_id = builder_handle.thread_id if can_resume_thread else None
+        allowed_paths, forbidden_paths = self._target_task_path_boundaries(
+            repo,
+            target_task_id,
+        )
         request_data = RepairRequestData(
             repair_id=repair_id,
             target_task_id=target_task_id,
@@ -69,7 +74,8 @@ class RepairService:
             failed_gates=failed,
             failure_fingerprints=[fp for fp in fingerprints if fp],
             evidence_paths=["05_gate_report.yaml"],
-            allowed_paths=["src/**", "tests/**"],
+            allowed_paths=allowed_paths,
+            forbidden_paths=forbidden_paths,
         )
         request_envelope = self.artifacts.envelope(
             run_id=run_id,
@@ -147,3 +153,16 @@ class RepairService:
             ],
         )
         repo.write(f"{repair_dir}/repair_result.yaml", result_envelope)
+
+    def _target_task_path_boundaries(
+        self,
+        repo: ArtifactRepository,
+        target_task_id: str,
+    ) -> tuple[list[str], list[str]]:
+        task_path = f"tasks/{target_task_id}/task.yaml"
+        if not (repo.root / task_path).exists():
+            return ["src/**", "tests/**"], []
+        task = ArtifactEnvelope[TaskData].model_validate(
+            repo.read(task_path, ArtifactType.TASK).model_dump(mode="json")
+        )
+        return task.data.allowed_paths, task.data.forbidden_paths

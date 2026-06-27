@@ -173,7 +173,17 @@ class ConsoleReadService:
         return row
 
     def _run_dir(self, run_id: str) -> Path:
-        return Path(self._run_row(run_id)["run_dir"])
+        row = self._run_row(run_id)
+        run_dir = Path(row["run_dir"])
+        expected_root = (self.root / CODUCTOR_DIR / "runs").resolve()
+        resolved = run_dir.resolve()
+        expected = (expected_root / run_id).resolve()
+        if resolved != expected:
+            raise ConsoleReadError(
+                f"run_dir is outside project runs directory: {run_dir}",
+                next_command=f"coductor status {run_id}",
+            )
+        return resolved
 
     def _safe_file(self, run_dir: Path, path: str) -> Path:
         try:

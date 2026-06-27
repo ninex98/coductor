@@ -95,7 +95,8 @@
         "repair_request",
         "repair_result",
         "review_report",
-        "evidence_bundle"
+        "evidence_bundle",
+        "release_manifest"
       ],
       "title": "ArtifactType",
       "type": "string"

@@ -25,6 +25,25 @@ class FileChangingBackend(FakeCodingBackend):
         )
 
 
+class SpecificFileChangingBackend(FakeCodingBackend):
+    def __init__(self, relative_path: str) -> None:
+        super().__init__()
+        self.relative_path = relative_path
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        from pathlib import Path
+
+        target = Path(request.workspace_path) / self.relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed\n", encoding="utf-8")
+        return WorkerResult(
+            worker_id=request.worker_id,
+            thread_id=handle.thread_id,
+            summary=f"changed {self.relative_path}",
+            files_changed=[self.relative_path],
+        )
+
+
 class EnvChangingBackend(FakeCodingBackend):
     def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
         env_path = request.workspace_path + "/.env"
@@ -46,6 +65,17 @@ class UsageReportingBackend(FakeCodingBackend):
             thread_id=handle.thread_id,
             summary="used real backend metrics",
             usage=BackendUsage(input_tokens=42, output_tokens=7, estimated=False),
+        )
+
+
+class SensitiveOutputBackend(FakeCodingBackend):
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        return WorkerResult(
+            worker_id=request.worker_id,
+            thread_id=handle.thread_id,
+            summary="OPENAI_API_KEY=sk-worker-secret",
+            commands_run=["curl -H 'Authorization: Bearer bearer-secret'"],
+            unresolved_issues=["password=plain-secret"],
         )
 
 
@@ -202,6 +232,79 @@ def test_task_execution_service_marks_protected_path_change_as_failed(tmp_path):
     assert "protected path changed: .env" in worker_result["data"]["unresolved_issues"]
 
 
+def test_task_execution_service_marks_change_outside_allowed_paths_as_failed(tmp_path):
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    goal = writer.write_goal(repo, "run_abc", "只修改源码", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.AUTO)
+    plan.data.tasks[0].allowed_paths = ["src/**"]
+    service = TaskExecutionService(
+        tmp_path,
+        config,
+        SpecificFileChangingBackend("README.md"),
+        writer,
+    )
+
+    service.execute_plan_task(
+        repo,
+        "run_abc",
+        plan,
+        plan.data.tasks[0],
+        {},
+        on_dispatch=lambda *_: None,
+    )
+
+    worker_result = load_yaml(
+        (tmp_path / "tasks/T001/worker_result.yaml").read_text(encoding="utf-8")
+    )
+    assert worker_result["data"]["exit_reason"] == "failed"
+    assert (
+        "path outside allowed_paths: README.md"
+        in worker_result["data"]["unresolved_issues"]
+    )
+
+
+def test_task_execution_service_marks_forbidden_path_change_as_failed(tmp_path):
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    goal = writer.write_goal(repo, "run_abc", "修改文档", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.AUTO)
+    plan.data.tasks[0].allowed_paths = ["docs/**"]
+    plan.data.tasks[0].forbidden_paths = ["docs/private/**"]
+    service = TaskExecutionService(
+        tmp_path,
+        config,
+        SpecificFileChangingBackend("docs/private/note.md"),
+        writer,
+    )
+
+    service.execute_plan_task(
+        repo,
+        "run_abc",
+        plan,
+        plan.data.tasks[0],
+        {},
+        on_dispatch=lambda *_: None,
+    )
+
+    worker_result = load_yaml(
+        (tmp_path / "tasks/T001/worker_result.yaml").read_text(encoding="utf-8")
+    )
+    assert worker_result["data"]["exit_reason"] == "failed"
+    assert (
+        "forbidden path changed: docs/private/note.md"
+        in worker_result["data"]["unresolved_issues"]
+    )
+
+
 def test_task_execution_service_uses_budget_worker_timeout(tmp_path):
     config = CoductorConfig.default()
     config.backend.provider = "fake"
@@ -258,6 +361,38 @@ def test_task_execution_service_records_worker_usage_metrics(tmp_path):
     assert usage["total_tokens"] == 49
     assert usage["estimated"] is False
     assert isinstance(usage["duration_ms"], int)
+
+
+def test_task_execution_service_redacts_sensitive_worker_result_fields(tmp_path):
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    goal = writer.write_goal(repo, "run_abc", "记录敏感输出", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.AUTO)
+    service = TaskExecutionService(tmp_path, config, SensitiveOutputBackend(), writer)
+
+    service.execute_plan_task(
+        repo,
+        "run_abc",
+        plan,
+        plan.data.tasks[0],
+        {},
+        on_dispatch=lambda *_: None,
+    )
+
+    worker_result_text = (tmp_path / "tasks/T001/worker_result.yaml").read_text(
+        encoding="utf-8"
+    )
+    worker_result = load_yaml(worker_result_text)
+    assert "sk-worker-secret" not in worker_result_text
+    assert "bearer-secret" not in worker_result_text
+    assert "plain-secret" not in worker_result_text
+    assert worker_result["data"]["summary"] == "OPENAI_API_KEY=[REDACTED]"
+    assert "Authorization: Bearer [REDACTED]" in worker_result["data"]["commands_run"][0]
+    assert worker_result["data"]["unresolved_issues"] == ["password=[REDACTED]"]
 
 
 def test_parallel_execution_skips_completed_task_ids_on_resume(tmp_path):

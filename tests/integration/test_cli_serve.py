@@ -36,6 +36,7 @@ def test_create_http_server_binds_loopback_without_optional_dependencies(tmp_pat
         tmp_path,
         host="127.0.0.1",
         port=8765,
+        control_token="server-token",
         bind_and_activate=False,
     )
     try:

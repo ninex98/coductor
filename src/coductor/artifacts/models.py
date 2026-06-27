@@ -260,6 +260,7 @@ class RepairRequestData(StrictModel):
     failure_fingerprints: list[str]
     evidence_paths: list[str] = Field(default_factory=list)
     allowed_paths: list[str] = Field(default_factory=list)
+    forbidden_paths: list[str] = Field(default_factory=list)
     instruction: str = "只修复导致当前 Gate 失败的最小范围，不进行无关重构。"
 
 

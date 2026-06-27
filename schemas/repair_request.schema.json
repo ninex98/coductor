@@ -71,7 +71,8 @@
         "repair_request",
         "repair_result",
         "review_report",
-        "evidence_bundle"
+        "evidence_bundle",
+        "release_manifest"
       ],
       "title": "ArtifactType",
       "type": "string"
@@ -137,6 +138,13 @@
             "type": "string"
           },
           "title": "Failure Fingerprints",
+          "type": "array"
+        },
+        "forbidden_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Forbidden Paths",
           "type": "array"
         },
         "instruction": {

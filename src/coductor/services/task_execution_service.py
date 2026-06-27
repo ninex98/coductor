@@ -36,6 +36,7 @@ from coductor.domain.enums import (
 )
 from coductor.prompts.renderer import render_worker_prompt
 from coductor.repository.worktree import WorktreeManager
+from coductor.security import redact_sensitive_list, redact_sensitive_text
 from coductor.services.usage import usage_from_backend
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
@@ -417,9 +418,14 @@ class TaskExecutionService:
                 before_snapshot=before_snapshot,
             )
             apply_issues: list[str] = []
-            protected_issues = self.protected_path_issues(result.files_changed, patch)
-            exit_reason = "failed" if protected_issues or apply_issues else result.exit_reason
-            unresolved_issues = result.unresolved_issues + apply_issues + protected_issues
+            path_issues = self.path_boundary_issues(
+                result.files_changed,
+                patch,
+                allowed_paths=task.data.allowed_paths,
+                forbidden_paths=task.data.forbidden_paths,
+            )
+            exit_reason = "failed" if path_issues or apply_issues else result.exit_reason
+            unresolved_issues = result.unresolved_issues + apply_issues + path_issues
         finally:
             self._cleanup_worker_workspace(run_id, task_id, strategy)
         usage = usage_from_backend(
@@ -428,14 +434,17 @@ class TaskExecutionService:
             summary=result.summary,
             duration_ms=duration_ms,
         )
+        summary = redact_sensitive_text(result.summary)
+        commands_run = redact_sensitive_list(result.commands_run)
+        unresolved_issues = redact_sensitive_list(unresolved_issues)
         result_data = WorkerResultData(
             worker_id=result.worker_id,
             thread_id=result.thread_id,
             task_id=task_id,
-            summary=result.summary,
+            summary=summary,
             files_read=result.files_read,
             files_changed=result.files_changed,
-            commands_run=result.commands_run,
+            commands_run=commands_run,
             tests_claimed=result.tests_claimed,
             generated_artifacts=result.generated_artifacts,
             patch=FileReference(
@@ -643,13 +652,43 @@ class TaskExecutionService:
         return relative_path.startswith(ignored_prefixes)
 
     def protected_path_issues(self, files_changed: list[str], patch: Path) -> list[str]:
-        changed = set(files_changed)
-        changed.update(self._paths_from_patch(patch))
+        changed = self._changed_paths(files_changed, patch)
         issues: list[str] = []
         for path in sorted(changed):
             if self._is_protected_path(path):
                 issues.append(f"protected path changed: {path}")
         return issues
+
+    def path_boundary_issues(
+        self,
+        files_changed: list[str],
+        patch: Path,
+        *,
+        allowed_paths: list[str],
+        forbidden_paths: list[str],
+    ) -> list[str]:
+        changed = self._changed_paths(files_changed, patch)
+        issues: list[str] = []
+        for path in sorted(changed):
+            if self._is_protected_path(path):
+                issues.append(f"protected path changed: {path}")
+            if _matches_any(path, forbidden_paths):
+                issues.append(f"forbidden path changed: {path}")
+            if allowed_paths and not _matches_any(path, allowed_paths):
+                issues.append(f"path outside allowed_paths: {path}")
+        return issues
+
+    def _changed_paths(self, files_changed: list[str], patch: Path) -> set[str]:
+        changed = set(files_changed)
+        changed.update(self._paths_from_patch(patch))
+        return {
+            path
+            for path in changed
+            if path
+            and path != "/dev/null"
+            and not self._is_tool_path(path)
+            and not path.startswith("coductor_fake_output_")
+        }
 
     def _paths_from_patch(self, patch: Path) -> set[str]:
         paths: set[str] = set()
@@ -678,4 +717,12 @@ def _patch_has_changes(path: Path) -> bool:
         or "\n--- " in content
         or content.startswith("--- ")
         or "GIT binary patch" in content
+    )
+
+
+def _matches_any(relative_path: str, patterns: list[str]) -> bool:
+    return any(
+        fnmatch.fnmatch(relative_path, pattern)
+        or fnmatch.fnmatch("/" + relative_path, pattern)
+        for pattern in patterns
     )

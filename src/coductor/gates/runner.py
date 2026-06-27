@@ -12,6 +12,7 @@ from coductor.artifacts.models import GateReportData, GateResultData
 from coductor.gates.models import QualityGate
 from coductor.gates.parsers import failure_fingerprint
 from coductor.repository.git import current_commit
+from coductor.security import redact_sensitive_text
 
 GateStatus = Literal["passed", "failed", "skipped", "timeout"]
 
@@ -70,6 +71,8 @@ class GateRunner:
             stderr = f"executable not found: {exc.filename}"
             exit_code = 127
             status = "failed"
+        stdout = redact_sensitive_text(stdout)
+        stderr = redact_sensitive_text(stderr)
         duration_ms = int((time.monotonic() - start) * 1000)
         (self.run_dir / stdout_path).write_text(stdout, encoding="utf-8")
         (self.run_dir / stderr_path).write_text(stderr, encoding="utf-8")

@@ -35,20 +35,31 @@ class LocalConsoleResponse:
 
 
 class LocalConsoleApp:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, control_token: str | None = None) -> None:
         self.root = root
+        self.control_token = control_token
         self.control_service = ConsoleControlService(root)
         self.doctor_service = ConsoleDoctorService(root)
         self.read_service = ConsoleReadService(root)
         self.static_root = Path(__file__).parent / "static"
 
-    def handle(self, method: str, raw_path: str) -> LocalConsoleResponse:
+    def handle(
+        self,
+        method: str,
+        raw_path: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> LocalConsoleResponse:
         parsed = urlparse(raw_path)
         path = unquote(parsed.path)
+        headers = headers or {}
         try:
             if method == "GET":
                 return self._handle_get(path)
             if method == "POST":
+                auth_error = self._control_auth_error(headers)
+                if auth_error is not None:
+                    return auth_error
                 return self._handle_post(path)
             return _error("method not allowed", status=HTTPStatus.METHOD_NOT_ALLOWED)
         except ConsoleReadError as error:
@@ -119,15 +130,42 @@ class LocalConsoleApp:
         path = self.static_root / relative_path
         if not path.exists() or not path.is_file():
             return _error("static asset not found", status=HTTPStatus.NOT_FOUND)
+        body = path.read_text(encoding="utf-8")
+        if relative_path == "index.html" and self.control_token:
+            body = body.replace(
+                "</head>",
+                (
+                    f'<meta name="coductor-control-token" '
+                    f'content="{_html_attr(self.control_token)}" />\n  </head>'
+                ),
+            )
         return LocalConsoleResponse(
             status=HTTPStatus.OK,
-            body=path.read_text(encoding="utf-8"),
+            body=body,
             content_type=content_type,
         )
 
+    def _control_auth_error(self, headers: dict[str, str]) -> LocalConsoleResponse | None:
+        if not self.control_token:
+            return None
+        token = _header(headers, "x-coductor-token")
+        if token != self.control_token:
+            return _error(
+                "missing or invalid control token",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        origin = _header(headers, "origin")
+        host = _header(headers, "host")
+        if origin and host and urlparse(origin).netloc != host:
+            return _error(
+                "origin does not match local console host",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        return None
 
-def create_app(root: Path) -> LocalConsoleApp:
-    return LocalConsoleApp(root)
+
+def create_app(root: Path, *, control_token: str | None = None) -> LocalConsoleApp:
+    return LocalConsoleApp(root, control_token=control_token)
 
 
 def _ok(data: object) -> LocalConsoleResponse:
@@ -170,3 +208,20 @@ def _content_type(path: str) -> str:
     if path.endswith(".js"):
         return "application/javascript; charset=utf-8"
     return "text/plain; charset=utf-8"
+
+
+def _header(headers: dict[str, str], name: str) -> str | None:
+    normalized = name.lower()
+    for key, value in headers.items():
+        if key.lower() == normalized:
+            return value
+    return None
+
+
+def _html_attr(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )

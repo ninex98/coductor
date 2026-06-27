@@ -71,7 +71,8 @@
         "repair_request",
         "repair_result",
         "review_report",
-        "evidence_bundle"
+        "evidence_bundle",
+        "release_manifest"
       ],
       "title": "ArtifactType",
       "type": "string"
@@ -200,6 +201,9 @@
           "title": "Reviewer Thread Id",
           "type": "string"
         },
+        "usage": {
+          "$ref": "#/$defs/WorkerUsage"
+        },
         "verdict": {
           "default": "pass",
           "enum": [
@@ -216,6 +220,78 @@
         "reviewed_head_commit"
       ],
       "title": "ReviewReportData",
+      "type": "object"
+    },
+    "WorkerUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "estimated": {
+          "default": true,
+          "title": "Estimated",
+          "type": "boolean"
+        },
+        "estimated_cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimated Cost Usd"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        }
+      },
+      "title": "WorkerUsage",
       "type": "object"
     }
   },

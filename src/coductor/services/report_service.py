@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from coductor.constants import CODUCTOR_DIR
 from coductor.storage.database import Database
 from coductor.workflow.state import WorkflowState
 
@@ -25,8 +26,9 @@ CONTROL_ALLOWED_STATUSES: dict[str, set[str]] = {
 
 
 class ReportService:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, root: Path | None = None) -> None:
         self.database = database
+        self.root = root
 
     def run_context(self, run_id: str, stage: str) -> dict[str, str]:
         row = self.database.get_run(run_id)
@@ -38,6 +40,8 @@ class ReportService:
                 next_command="coductor status",
                 message="未找到运行记录。",
             )
+        if self.root is not None:
+            self._validate_run_dir(row, run_id, stage)
         return row
 
     def artifacts(self, run_id: str) -> str:
@@ -182,6 +186,21 @@ class ReportService:
         if data is None:
             return None
         return WorkflowState.model_validate(data)
+
+    def _validate_run_dir(self, row: dict[str, str], run_id: str, stage: str) -> None:
+        root = self.root
+        if root is None:
+            return
+        run_dir = Path(row["run_dir"])
+        expected = (root / CODUCTOR_DIR / "runs" / run_id).resolve()
+        if run_dir.resolve() != expected:
+            raise RunReportError(
+                run_id=run_id,
+                stage=stage,
+                recoverable=True,
+                next_command=f"coductor status {run_id}",
+                message=f"run_dir is outside project runs directory: {run_dir}",
+            )
 
     def _checkpoint_lines(self, state: WorkflowState) -> list[str]:
         lines = [

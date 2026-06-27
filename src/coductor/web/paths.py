@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from coductor.security import redact_sensitive_text
+
 ALLOWED_PREVIEW_SUFFIXES = {".yaml", ".yml", ".log", ".md", ".diff", ".patch", ".txt"}
 MAX_PREVIEW_BYTES = 512_000
 
@@ -31,4 +33,4 @@ def read_text_preview(path: Path) -> tuple[str, bool]:
     data = path.read_bytes()
     truncated = len(data) > MAX_PREVIEW_BYTES
     preview = data[:MAX_PREVIEW_BYTES].decode("utf-8", "replace")
-    return preview, truncated
+    return redact_sensitive_text(preview), truncated

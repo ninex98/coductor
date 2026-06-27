@@ -38,7 +38,7 @@ class ConsoleControlService:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.db = Database(root / CODUCTOR_DIR / "coductor.sqlite3")
-        self.report = ReportService(self.db)
+        self.report = ReportService(self.db, root=root)
 
     def run_action(self, run_id: str, action: str) -> ConsoleActionResult:
         if action == "resume":
