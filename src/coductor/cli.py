@@ -310,13 +310,35 @@ def show_run(run_id: str) -> None:
 
 def resume_run(run_id: str) -> None:
     root = _root(".")
-    row = _db(root).get_run(run_id)
+    service = _report_service(root)
+    row = service.database.get_run(run_id)
     if row is None:
         _print(f"未找到 Run: {run_id}")
         return
     config = load_config(root)
     result = RunService(root, config).resume(run_id)
+    resume_error = _resume_error_message(result.message)
+    if result.status == RunStatus.HUMAN_REQUIRED and resume_error is not None:
+        _exit_with_report_error(
+            service,
+            RunReportError(
+                run_id=run_id,
+                stage="resume",
+                recoverable=True,
+                next_command=f"coductor status {run_id}",
+                message=resume_error,
+            ),
+        )
     _print(f"恢复完成: {result.run_id} -> {result.status}")
+
+
+def _resume_error_message(message: str) -> str | None:
+    operational_errors = (
+        "already locked by another operation",
+        "outside project runs directory",
+        "unknown run",
+    )
+    return message if any(error in message for error in operational_errors) else None
 
 
 def report_run(run_id: str) -> None:

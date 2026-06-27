@@ -597,6 +597,47 @@ def test_cli_control_command_takes_over_stale_lock(
     assert row["status"] == "paused"
 
 
+def test_cli_resume_rejects_run_dir_outside_project_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(['schema_version: "1.0"', "backend:", "  provider: fake", "quality_gates: []"])
+        + "\n",
+        encoding="utf-8",
+    )
+    run_id = "run_resume_cli_outside_00000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="inspect_repository",
+            raw_goal="从 CLI 恢复越界目录",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    service.db.upsert_run(run_id, "running", outside.as_posix(), "2026-06-24T00:00:02Z")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["resume", run_id])
+
+    assert result.exit_code == 1
+    assert "outside project runs directory" in result.output
+    assert "恢复完成" not in result.output
+    assert not (run_dir / "07_evidence.yaml").exists()
+    assert service.db.get_run_lock(run_id) is None
+
+
 def test_cli_approve_marks_parallel_plan_and_resume_continues(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
