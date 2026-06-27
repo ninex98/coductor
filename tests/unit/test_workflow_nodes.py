@@ -2,12 +2,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coductor.artifacts.models import GateReportData, GateResultData
+from coductor.artifacts.models import (
+    EvidenceBundleData,
+    GateReportData,
+    GateResultData,
+    GateSummary,
+    ReviewReportData,
+    ReviewSummary,
+    Rollback,
+)
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
-from coductor.domain.enums import ArtifactStatus, ArtifactType, ExecutionMode, RunStatus
+from coductor.domain.enums import (
+    ArtifactStatus,
+    ArtifactType,
+    ExecutionMode,
+    ExecutionStrategy,
+    ProducerKind,
+    RunStatus,
+)
 from coductor.services.repair_service import RepairService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
@@ -44,6 +59,88 @@ def _runtime_context(
     checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
     context = WorkflowRuntimeContext(repo=repo, artifacts=writer, checkpoints=checkpoints)
     return run_dir, repo, writer, checkpoints, context
+
+
+def _write_gate_report(
+    repo: ArtifactRepository,
+    writer: WorkflowArtifactWriter,
+    run_id: str,
+    *,
+    passed: bool = True,
+) -> None:
+    envelope = writer.envelope(
+        run_id=run_id,
+        artifact_type=ArtifactType.GATE_REPORT,
+        artifact_id_prefix="art_gates",
+        status=ArtifactStatus.PASSED if passed else ArtifactStatus.FAILED,
+        producer={"kind": ProducerKind.TOOL, "name": "gate-runner"},
+        data=GateReportData(
+            base_commit="base",
+            head_commit="head",
+            gates=[],
+            required_gates_passed=passed,
+            next_action="review" if passed else "repair",
+        ),
+    )
+    repo.write("05_gate_report.yaml", envelope)
+
+
+def _write_review_report(
+    repo: ArtifactRepository,
+    writer: WorkflowArtifactWriter,
+    run_id: str,
+    *,
+    passed: bool = True,
+) -> None:
+    envelope = writer.envelope(
+        run_id=run_id,
+        artifact_type=ArtifactType.REVIEW_REPORT,
+        artifact_id_prefix="art_review",
+        status=ArtifactStatus.PASSED if passed else ArtifactStatus.FAILED,
+        producer={"kind": ProducerKind.MODEL, "name": "reviewer"},
+        data=ReviewReportData(
+            reviewer_thread_id="thread_review",
+            reviewed_base_commit="base",
+            reviewed_head_commit="head",
+            findings=[],
+            blocking_findings=0 if passed else 1,
+            verdict="pass" if passed else "fail",
+            requires_repair=not passed,
+        ),
+    )
+    repo.write("06_review.yaml", envelope)
+
+
+def _write_evidence_bundle(
+    repo: ArtifactRepository,
+    writer: WorkflowArtifactWriter,
+    run_id: str,
+    *,
+    final_status: str = "ready_for_human_review",
+) -> None:
+    envelope = writer.envelope(
+        run_id=run_id,
+        artifact_type=ArtifactType.EVIDENCE_BUNDLE,
+        artifact_id_prefix="art_evidence",
+        status=(
+            ArtifactStatus.READY_FOR_HUMAN_REVIEW
+            if final_status == "ready_for_human_review"
+            else ArtifactStatus.HUMAN_REQUIRED
+        ),
+        producer={"kind": ProducerKind.SYSTEM, "name": "delivery-manager"},
+        data=EvidenceBundleData(
+            goal_title="修复示例函数",
+            final_status=final_status,
+            strategy_used=ExecutionStrategy.SOLO,
+            base_commit="base",
+            head_commit="head",
+            completed_tasks=[],
+            gate_summary=GateSummary(required=0, passed=0, failed=0),
+            review_summary=ReviewSummary(blocking_findings=0),
+            rollback=Rollback(method="git revert", instructions="revert"),
+        ),
+    )
+    repo.write("07_evidence.yaml", envelope)
 
 
 def test_front_half_nodes_record_stage_and_artifact_paths() -> None:
@@ -461,6 +558,57 @@ def test_integrate_changes_node_writes_integration_when_runtime_context_is_prese
     assert saved.current_stage == "run_quality_gates"
 
 
+def test_integrate_changes_node_reuses_existing_integration_artifact_when_resuming(
+    tmp_path,
+) -> None:
+    run_id = "run_existing_integration_000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    goal = writer.write_goal(repo, run_id, "修复示例函数", ExecutionMode.AUTO)
+    snapshot = writer.write_snapshot(repo, run_id, goal)
+    spec = writer.write_spec(repo, run_id, goal, snapshot)
+    plan_artifact = writer.write_plan(repo, run_id, spec, snapshot, ExecutionMode.AUTO)
+    WorkflowVerificationService(tmp_path, CoductorConfig.default(), writer).write_integration(
+        repo,
+        run_id,
+        plan_artifact,
+        ["T001"],
+    )
+    original_integration = (run_dir / "04_integration.yaml").read_text(
+        encoding="utf-8"
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    class RaisingVerification:
+        def write_integration(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            raise AssertionError("existing integration artifact should be reused")
+
+    patch = integrate_changes_node(
+        state,
+        context=context,
+        plan=plan_artifact,
+        completed_task_ids=["T999"],
+        verification=RaisingVerification(),
+    )
+
+    assert patch == {
+        "current_stage": "run_quality_gates",
+        "artifacts": {"04_integration": "04_integration.yaml"},
+    }
+    assert (
+        run_dir / "04_integration.yaml"
+    ).read_text(encoding="utf-8") == original_integration
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["04_integration"] == "04_integration.yaml"
+    assert saved.current_stage == "run_quality_gates"
+
+
 def test_run_quality_gates_node_writes_gate_report_when_runtime_context_is_present(
     tmp_path,
 ) -> None:
@@ -498,6 +646,140 @@ def test_run_quality_gates_node_writes_gate_report_when_runtime_context_is_prese
     assert saved.artifacts["05_gate_report"] == "05_gate_report.yaml"
     assert saved.current_stage == "run_quality_gates"
     assert saved.gate_passed is True
+
+
+def test_run_quality_gates_node_reuses_existing_gate_report_when_resuming(
+    tmp_path,
+) -> None:
+    run_id = "run_existing_gate_report_00000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    _write_gate_report(repo, writer, run_id, passed=False)
+    original_gate_report = (run_dir / "05_gate_report.yaml").read_text(
+        encoding="utf-8"
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+        max_repair_attempts=1,
+    )
+
+    class RaisingVerification:
+        def run_gates(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            raise AssertionError("existing gate report should be reused")
+
+    patch = run_quality_gates_node(
+        state,
+        context=context,
+        verification=RaisingVerification(),
+    )
+
+    assert patch == {
+        "current_stage": "run_quality_gates",
+        "artifacts": {"05_gate_report": "05_gate_report.yaml"},
+        "gate_passed": False,
+    }
+    assert (run_dir / "05_gate_report.yaml").read_text(
+        encoding="utf-8"
+    ) == original_gate_report
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.artifacts["05_gate_report"] == "05_gate_report.yaml"
+    assert saved.current_stage == "run_quality_gates"
+    assert saved.gate_passed is False
+
+
+def test_run_quality_gates_node_reuses_existing_failed_gate_report_at_stop_limit(
+    tmp_path,
+) -> None:
+    run_id = "run_existing_gate_report_limit_001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    _write_gate_report(repo, writer, run_id, passed=False)
+    original_gate_report = (run_dir / "05_gate_report.yaml").read_text(
+        encoding="utf-8"
+    )
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+        repair_attempts=1,
+        max_repair_attempts=1,
+    )
+
+    class RaisingVerification:
+        def run_gates(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            raise AssertionError("existing gate report should be reused")
+
+    patch = run_quality_gates_node(
+        state,
+        context=context,
+        verification=RaisingVerification(),
+    )
+
+    assert patch == {
+        "current_stage": "human_required",
+        "artifacts": {"05_gate_report": "05_gate_report.yaml"},
+        "gate_passed": False,
+        "status": RunStatus.HUMAN_REQUIRED,
+        "last_error": "质量门失败且达到停止规则",
+    }
+    assert (run_dir / "05_gate_report.yaml").read_text(
+        encoding="utf-8"
+    ) == original_gate_report
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.status == RunStatus.HUMAN_REQUIRED
+    assert saved.current_stage == "human_required"
+    assert saved.gate_passed is False
+
+
+def test_run_quality_gates_node_reruns_after_repair_result_exists(tmp_path) -> None:
+    run_id = "run_gate_after_repair_0000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    _write_gate_report(repo, writer, run_id, passed=False)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+        artifacts={"repair_result_R001": "repairs/R001/repair_result.yaml"},
+        repair_attempts=1,
+        max_repair_attempts=2,
+    )
+
+    class PassingVerification:
+        def run_gates(self, repo_arg, run_id_arg):  # noqa: ANN001, ANN202
+            assert repo_arg is repo
+            assert run_id_arg == run_id
+            _write_gate_report(repo, writer, run_id, passed=True)
+            from coductor.artifacts.models import ArtifactEnvelope
+
+            return ArtifactEnvelope[GateReportData].model_validate(
+                repo.read("05_gate_report.yaml", ArtifactType.GATE_REPORT).model_dump(
+                    mode="json"
+                )
+            )
+
+    patch = run_quality_gates_node(
+        state,
+        context=context,
+        verification=PassingVerification(),
+    )
+
+    assert patch == {
+        "current_stage": "run_quality_gates",
+        "artifacts": {"05_gate_report": "05_gate_report.yaml"},
+        "gate_passed": True,
+    }
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.gate_passed is True
+    assert saved.current_stage == "run_quality_gates"
 
 
 def test_repair_failure_node_writes_repair_artifacts_when_runtime_context_is_present(
@@ -626,6 +908,38 @@ def test_run_independent_review_node_saves_review_when_runtime_context_is_presen
     assert saved.artifacts["06_review"] == "06_review.yaml"
 
 
+def test_run_independent_review_node_reuses_existing_review_when_resuming(
+    tmp_path,
+) -> None:
+    run_id = "run_existing_review_0000000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    _write_review_report(repo, writer, run_id, passed=False)
+    original_review = (run_dir / "06_review.yaml").read_text(encoding="utf-8")
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    def raise_review():
+        raise AssertionError("existing review artifact should be reused")
+
+    patch = run_independent_review_node(state, context=context, review=raise_review)
+
+    assert patch == {
+        "current_stage": "run_independent_review",
+        "artifacts": {"06_review": "06_review.yaml"},
+        "review_passed": False,
+    }
+    assert (run_dir / "06_review.yaml").read_text(encoding="utf-8") == original_review
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.review_passed is False
+    assert saved.artifacts["06_review"] == "06_review.yaml"
+
+
 def test_prepare_evidence_node_saves_evidence_when_runtime_context_is_present(tmp_path) -> None:
     run_id = "run_evidence_node_0000000000000001"
     run_dir = tmp_path / ".coductor" / "runs" / run_id
@@ -683,4 +997,34 @@ def test_prepare_evidence_node_saves_evidence_when_runtime_context_is_present(tm
     saved = checkpoints.load(run_id)
     assert saved is not None
     assert saved.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert saved.artifacts["07_evidence"] == "07_evidence.yaml"
+
+
+def test_prepare_evidence_node_reuses_existing_evidence_when_resuming(tmp_path) -> None:
+    run_id = "run_existing_evidence_0000000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    _write_evidence_bundle(repo, writer, run_id, final_status="human_required")
+    original_evidence = (run_dir / "07_evidence.yaml").read_text(encoding="utf-8")
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+    )
+
+    def raise_evidence():
+        raise AssertionError("existing evidence artifact should be reused")
+
+    patch = prepare_evidence_node(state, context=context, evidence=raise_evidence)
+
+    assert patch == {
+        "current_stage": "prepare_evidence",
+        "status": RunStatus.HUMAN_REQUIRED,
+        "artifacts": {"07_evidence": "07_evidence.yaml"},
+    }
+    assert (run_dir / "07_evidence.yaml").read_text(encoding="utf-8") == original_evidence
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.status == RunStatus.HUMAN_REQUIRED
     assert saved.artifacts["07_evidence"] == "07_evidence.yaml"

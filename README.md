@@ -36,7 +36,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 
 LangGraph、`openai-codex` SDK、Typer、Rich、PyYAML、SQLAlchemy、pytest、ruff、mypy 在 `pyproject.toml` 中声明为目标依赖。当前代码把 Coding Backend 隔离在接口后：`codex_exec` 是默认真实执行路径，`fake` 用于离线验证，`codex_sdk` 保持 SDK 实验边界且需要显式配置。Backend 只提供执行摘要、命令记录和退出原因；`worker_result.yaml`、`review.yaml`、`gate_report.yaml`、`evidence.yaml` 等固定结构文件始终由 Coductor 写入，不能依赖外部 CLI 的 schema 模式。
 
-`RunService` 当前构建 contextual LangGraph 执行主 workflow：节点保持薄，按固定 Artifact 读取上游事实，并调用 artifact writer、task execution、verification、repair、review delivery 等服务写入下游 YAML。`resume` 通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数；恢复前会校验已有 Artifact 链路，检测到 hash 或 revision 不一致时进入 `human_required`，避免直接覆盖可疑证据。链路完整时 graph 会从 checkpoint stage 继续；checkpoint 缺少必要 Artifact 时回退到 `collect_goal` 重放。前半段节点会复用已存在的 `00_goal.yaml`、`01_repository_snapshot.yaml`、`02_spec.yaml` 和 `03_execution_plan.yaml`，其中计划复用仍会执行 validation 和 approval 判定。`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；直接操作 LangGraph graph 时使用 `open_langgraph()` / `open_graph()` context manager 管理 SQLite 连接生命周期。
+`RunService` 当前构建 contextual LangGraph 执行主 workflow：节点保持薄，按固定 Artifact 读取上游事实，并调用 artifact writer、task execution、verification、repair、review delivery 等服务写入下游 YAML。`resume` 通过 SQLite workflow checkpoint 恢复原 `run_id`、目标、执行模式、阶段状态和修复次数；恢复前会校验已有 Artifact 链路，检测到 hash 或 revision 不一致时进入 `human_required`，避免直接覆盖可疑证据。链路完整时 graph 会从 checkpoint stage 继续；checkpoint 缺少必要 Artifact 时回退到 `collect_goal` 重放。前半段节点会复用已存在的 `00_goal.yaml`、`01_repository_snapshot.yaml`、`02_spec.yaml` 和 `03_execution_plan.yaml`，其中计划复用仍会执行 validation 和 approval 判定。后半段已支持复用 `04_integration.yaml`、入口态的 `05_gate_report.yaml`、`06_review.yaml` 和 `07_evidence.yaml`；修复产物出现后会重新执行质量门，避免复用修复前的失败报告。`compile_workflow_graph` 支持传入 checkpointer，`langgraph-checkpoint-sqlite` 已作为目标依赖声明；直接操作 LangGraph graph 时使用 `open_langgraph()` / `open_graph()` context manager 管理 SQLite 连接生命周期。
 
 ## 最短演示
 
@@ -124,7 +124,7 @@ data:
 
 ## Roadmap
 
-- 已完成：artifact lineage、resume stale 检测、前半段节点级幂等恢复、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、parallel 审批恢复、worktree 并发执行、CLI 控制面真实 verify/review、运行 duration/token 指标、LangGraph checkpoint 生命周期清理、evidence hardening、demo E2E。
-- 后续：Web 控制台、通知审批、PR 创建、更多 Backend、后半段节点级幂等恢复扩展。
+- 已完成：artifact lineage、resume stale 检测、前半段节点级幂等恢复、`04-07` 后半段 Artifact 复用、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、parallel 审批恢复、worktree 并发执行、CLI 控制面真实 verify/review、运行 duration/token 指标、LangGraph checkpoint 生命周期清理、evidence hardening、demo E2E。
+- 后续：Web 控制台、通知审批、PR 创建、更多 Backend、dispatch/repair 执行型节点幂等恢复扩展。
 
 危险能力默认关闭：不推送远程分支，不创建 PR，不读取生产秘密，不自动合并。

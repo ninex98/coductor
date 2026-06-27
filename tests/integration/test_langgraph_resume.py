@@ -3,11 +3,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from coductor.artifacts.models import GateReportData
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig, QualityGateConfig
-from coductor.domain.enums import ExecutionMode, RunStatus
+from coductor.domain.enums import ArtifactStatus, ArtifactType, ExecutionMode, RunStatus
 from coductor.services.run_service import RunService
 from coductor.services.task_execution_service import TaskExecutionService
 from coductor.workflow.langgraph_checkpoint import langgraph_thread_config
@@ -175,6 +176,70 @@ def test_resume_reuses_existing_spec_when_checkpoint_starts_at_draft_spec(
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert (run_dir / "02_spec.yaml").read_text(encoding="utf-8") == original_spec
     assert (run_dir / "07_evidence.yaml").exists()
+
+
+def test_resume_reuses_existing_gate_report_at_repair_limit(
+    tmp_path: Path,
+) -> None:
+    command = f"{sys.executable} -c 'import sys; sys.exit(0)'"
+    config = _config(command)
+    config.workflow.max_repair_attempts = 1
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_gate_stage_resume_000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    goal = service.artifacts.write_goal(
+        repo,
+        run_id,
+        "从 run_quality_gates 阶段继续",
+        service.config.workflow.default_mode,
+    )
+    snapshot = service.artifacts.write_snapshot(repo, run_id, goal)
+    spec = service.artifacts.write_spec(repo, run_id, goal, snapshot)
+    service.artifacts.write_plan(repo, run_id, spec, snapshot, ExecutionMode.AUTO)
+    gate_report = service.artifacts.envelope(
+        run_id=run_id,
+        artifact_type=ArtifactType.GATE_REPORT,
+        artifact_id_prefix="art_gates",
+        status=ArtifactStatus.FAILED,
+        producer={"kind": "tool", "name": "gate-runner"},
+        data=GateReportData(
+            base_commit="base",
+            head_commit="head",
+            gates=[],
+            required_gates_passed=False,
+            next_action="repair",
+        ),
+    )
+    repo.write("05_gate_report.yaml", gate_report)
+    original_gate_report = (run_dir / "05_gate_report.yaml").read_text(encoding="utf-8")
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="run_quality_gates",
+            repair_attempts=1,
+            max_repair_attempts=1,
+            raw_goal="从 run_quality_gates 阶段继续",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+            artifacts={
+                "00_goal": "00_goal.yaml",
+                "01_repository_snapshot": "01_repository_snapshot.yaml",
+                "02_spec": "02_spec.yaml",
+                "03_execution_plan": "03_execution_plan.yaml",
+                "05_gate_report": "05_gate_report.yaml",
+            },
+        )
+    )
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.HUMAN_REQUIRED
+    assert "质量门失败且达到停止规则" in result.message
+    assert (run_dir / "05_gate_report.yaml").read_text(encoding="utf-8") == original_gate_report
+    assert not (run_dir / "06_review.yaml").exists()
+    assert not (run_dir / "07_evidence.yaml").exists()
 
 
 def test_resume_does_not_continue_paused_run(tmp_path: Path) -> None:
