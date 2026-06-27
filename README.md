@@ -22,6 +22,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 - Artifact hash、revision history、lineage 输入记录和 stale 拦截；
 - `coductor init`、`run`、`status`、`show`、`resume`、`report`、`doctor`；
 - `coductor artifacts`、`logs`、`explain`、`approve`、`pause`、`stop`、`verify`、`review` 控制面命令；
+- `coductor serve` 本地 Web 控制台：默认监听 `127.0.0.1`，展示 run、Artifact、Timeline、Doctor，并通过同一套锁和服务执行安全控制动作；
 - 仓库扫描、模拟 Spec、solo Plan、Plan Validator；
 - `FakeCodingBackend` 离线端到端运行；
 - Backend Factory：默认真实后端为 `codex exec`，测试和离线 smoke 使用 fake，`codex_sdk` 作为显式实验边界保留；
@@ -97,6 +98,42 @@ Evidence validation: valid
     └── patch.diff
 ```
 
+## 本地 Web 控制台
+
+`coductor serve` 会在当前目标项目启动本地控制台，不需要额外 Web 运行依赖，也不会替代 CLI 或固定 YAML Artifact。它只读取当前项目的 `.coductor/coductor.sqlite3` 和 `.coductor/runs/**`，并通过现有服务层执行人工控制动作。
+
+```bash
+cd /path/to/target-project
+coductor serve
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8765
+```
+
+常用参数：
+
+```bash
+coductor serve --host 127.0.0.1 --port 8765 --open
+coductor serve --host 0.0.0.0 --port 8765 --allow-lan
+```
+
+安全默认值：
+
+- 默认只监听 `127.0.0.1`；非 loopback host 必须显式传入 `--allow-lan`。
+- Web 控制台不提供任意 shell API，不默认开启 git push、PR 创建、联网执行或 Secrets 读取。
+- Artifact 和日志预览限制在 run 目录内，并拒绝路径穿越、绝对路径、软链接逃逸和不受支持的文件后缀。
+- `approve`、`pause`、`stop`、`resume`、`verify`、`review`、`release` 复用 CLI/service 的状态校验和 SQLite run lock。
+
+核心视图：
+
+- Overview：当前 run 状态、阶段、操作按钮和数量摘要。
+- Artifacts：固定 YAML Artifact 列表与原文预览。
+- Timeline：SQLite event timeline。
+- Doctor：本地配置、后端能力、安全开关和质量门摘要。
+
 ## YAML 示例
 
 ```yaml
@@ -125,6 +162,6 @@ data:
 ## Roadmap
 
 - 已完成：artifact lineage、resume stale 检测、前半段节点级幂等恢复、`04-07` 后半段 Artifact 复用、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、parallel 审批恢复、worktree 并发执行、CLI 控制面真实 verify/review、运行 duration/token 指标、LangGraph checkpoint 生命周期清理、evidence hardening、demo E2E。
-- 后续：Web 控制台、通知审批、PR 创建、更多 Backend、dispatch/repair 执行型节点幂等恢复扩展。
+- 后续：通知审批、PR 创建、更多 Backend、dispatch/repair 执行型节点幂等恢复扩展。
 
 危险能力默认关闭：不推送远程分支，不创建 PR，不读取生产秘密，不自动合并。

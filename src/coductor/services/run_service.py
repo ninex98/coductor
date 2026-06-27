@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -43,6 +44,8 @@ from coductor.workflow.graph import build_workflow_graph
 from coductor.workflow.langgraph_checkpoint import LangGraphCheckpointStore
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
+
+RUN_LOCK_STALE_AFTER_SECONDS = 30 * 60
 
 
 def utc_now() -> str:
@@ -100,6 +103,53 @@ class RunService:
             state,
             repo=repo,
             run_dir=run_dir,
+        )
+
+    def dry_run(
+        self,
+        raw_goal: str,
+        *,
+        mode: ExecutionMode | None = None,
+    ) -> RunResult:
+        run_id = new_id("run")
+        run_dir = self.runs_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        repo = ArtifactRepository(run_dir)
+        requested_mode = mode or self.config.workflow.default_mode
+        state = WorkflowState(
+            run_id=run_id,
+            status=RunStatus.HUMAN_REQUIRED,
+            repair_attempts=0,
+            raw_goal=raw_goal,
+            requested_mode=str(requested_mode),
+            run_dir=run_dir.as_posix(),
+            max_repair_attempts=self.config.workflow.max_repair_attempts,
+            current_stage="validate_execution_plan",
+        )
+        self._event(run_id, "collect_goal", "accepted user goal")
+        goal = self.artifacts.write_goal(repo, run_id, raw_goal, requested_mode)
+        state.artifacts["00_goal"] = "00_goal.yaml"
+        self._event(run_id, "inspect_repository", "capturing repository snapshot")
+        snapshot = self.artifacts.write_snapshot(repo, run_id, goal)
+        state.artifacts["01_repository_snapshot"] = "01_repository_snapshot.yaml"
+        self._event(run_id, "draft_spec", "writing specification artifact")
+        spec = self.artifacts.write_spec(repo, run_id, goal, snapshot)
+        state.artifacts["02_spec"] = "02_spec.yaml"
+        self._event(run_id, "create_execution_plan", "choosing execution strategy")
+        plan = self.artifacts.write_plan(repo, run_id, spec, snapshot, requested_mode)
+        state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
+        if not plan.data.validation.valid:
+            state.last_error = "plan validation failed"
+        else:
+            state.last_error = "dry-run complete; resume to execute workers"
+        self._store_run(state, run_dir)
+        self.save_checkpoint(state)
+        return RunResult(
+            run_id=run_id,
+            status=state.status,
+            run_dir=run_dir.as_posix(),
+            repair_attempts=0,
+            message=state.last_error or "",
         )
 
     def _run_contextual_graph(
@@ -168,6 +218,7 @@ class RunService:
             repo=repo,
             artifacts=self.artifacts,
             checkpoints=self.checkpoints,
+            config=self.config,
             task_execution=self.task_execution,
             verification=self.verification,
             review_delivery=self.review_delivery,
@@ -210,6 +261,26 @@ class RunService:
         return self.langgraph_checkpoints.open_graph()
 
     def resume(self, run_id: str) -> RunResult:
+        owner = self._lock_owner("resume")
+        if not self.db.acquire_run_lock(
+            run_id,
+            owner,
+            now=utc_now(),
+            stale_after_seconds=RUN_LOCK_STALE_AFTER_SECONDS,
+        ):
+            return RunResult(
+                run_id=run_id,
+                status=RunStatus.HUMAN_REQUIRED,
+                run_dir=(self.runs_dir / run_id).as_posix(),
+                repair_attempts=0,
+                message=f"run {run_id} is already locked by another operation",
+            )
+        try:
+            return self._resume_locked(run_id)
+        finally:
+            self.db.release_run_lock(run_id, owner)
+
+    def _resume_locked(self, run_id: str) -> RunResult:
         state = self._load_resume_state(run_id)
         if state is None or state.raw_goal is None:
             return RunResult(
@@ -258,6 +329,9 @@ class RunService:
             run_dir=run_dir,
         )
 
+    def _lock_owner(self, operation: str) -> str:
+        return f"{operation}:{os.getpid()}"
+
     def _load_resume_state(self, run_id: str) -> WorkflowState | None:
         state = self._load_langgraph_checkpoint(run_id)
         return state or self.checkpoints.load(run_id)
@@ -282,6 +356,8 @@ class RunService:
         for path in sorted(repo.root.rglob("*.yaml")):
             relative = path.relative_to(repo.root)
             if relative.parts and relative.parts[0] == "history":
+                continue
+            if relative.parts and relative.parts[0] == "repairs":
                 continue
             paths.append(relative.as_posix())
         return paths

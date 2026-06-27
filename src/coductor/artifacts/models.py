@@ -340,3 +340,28 @@ class EvidenceBundleData(StrictModel):
     manual_checks: list[str] = Field(default_factory=list)
     rollback: Rollback
     pull_request: PullRequestInfo = Field(default_factory=PullRequestInfo)
+
+
+class ReleaseGitState(StrictModel):
+    base_commit: str
+    head_commit: str
+    dirty_worktree: bool
+    changed_files: list[str] = Field(default_factory=list)
+
+
+class ReleaseSafety(StrictModel):
+    ready: bool
+    reasons: list[str] = Field(default_factory=list)
+    remote_actions_allowed: bool = False
+
+
+class ReleaseManifestData(StrictModel):
+    release_id: str
+    title: str
+    status: Literal["ready", "blocked"]
+    evidence_path: str = "07_evidence.yaml"
+    report_path: str = "delivery-report.md"
+    git: ReleaseGitState
+    safety: ReleaseSafety
+    local_commands: list[str] = Field(default_factory=list)
+    manual_commands: list[str] = Field(default_factory=list)

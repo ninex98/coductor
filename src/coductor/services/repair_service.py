@@ -17,9 +17,12 @@ from coductor.artifacts.models import (
 )
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.backends.base import CodingBackend, WorkerHandle, WorkerRequest
+from coductor.backends.capabilities import describe_backend_capability
+from coductor.backends.factory import is_codex_sdk_available
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ArtifactStatus, ArtifactType, ProducerKind, SandboxMode
 from coductor.prompts.renderer import render_worker_prompt
+from coductor.services.task_execution_service import TaskExecutionService
 from coductor.services.usage import usage_from_backend
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
@@ -52,10 +55,15 @@ class RepairService:
         ]
         repair_id = f"R{attempt:03d}"
         repair_dir = f"repairs/{repair_id}"
+        can_resume_thread = describe_backend_capability(
+            self.config.backend.provider,
+            sdk_available=is_codex_sdk_available(),
+        ).supports_resume_thread
+        resume_thread_id = builder_handle.thread_id if can_resume_thread else None
         request_data = RepairRequestData(
             repair_id=repair_id,
             target_task_id=target_task_id,
-            resume_thread_id=builder_handle.thread_id,
+            resume_thread_id=resume_thread_id,
             attempt=attempt,
             max_attempts=self.config.workflow.max_repair_attempts,
             failed_gates=failed,
@@ -87,14 +95,25 @@ class RepairService:
             ),
             workspace_path=self.root.as_posix(),
             sandbox=SandboxMode.WORKSPACE_WRITE,
-            thread_policy="resume",
-            existing_thread_id=builder_handle.thread_id,
+            thread_policy="resume" if can_resume_thread else "new",
+            existing_thread_id=resume_thread_id,
         )
+        diff_helper = TaskExecutionService(self.root, self.config, self.backend, self.artifacts)
+        before_snapshot = diff_helper.workspace_snapshot(self.root)
         started_at = time.monotonic()
         result = self.backend.continue_worker(builder_handle, request)
         duration_ms = int((time.monotonic() - started_at) * 1000)
         patch = repo.root / f"{repair_dir}/repair_result.patch"
-        patch.write_text("# fake repair result\n", encoding="utf-8")
+        diff = diff_helper.workspace_diff(self.root)
+        if not diff.strip():
+            diff = diff_helper.snapshot_diff(
+                before_snapshot,
+                diff_helper.workspace_snapshot(self.root),
+            )
+        if diff.strip():
+            patch.write_text(diff, encoding="utf-8")
+        else:
+            patch.write_text("# coductor no repair diff captured\n", encoding="utf-8")
         usage = usage_from_backend(
             result.usage,
             prompt=request.prompt,

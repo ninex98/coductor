@@ -162,6 +162,7 @@ def test_contextual_workflow_graph_executes_happy_path_delivery(tmp_path) -> Non
         repo=repo,
         artifacts=writer,
         checkpoints=checkpoints,
+        config=config,
         task_execution=TaskExecutionService(tmp_path, config, backend, writer),
         verification=WorkflowVerificationService(tmp_path, config, writer),
         review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
@@ -204,6 +205,7 @@ def test_contextual_workflow_graph_persists_completed_pipeline_tasks(tmp_path) -
         repo=repo,
         artifacts=writer,
         checkpoints=checkpoints,
+        config=config,
         task_execution=TaskExecutionService(tmp_path, config, backend, writer),
         verification=WorkflowVerificationService(tmp_path, config, writer),
         review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
@@ -251,6 +253,28 @@ class _FailingBackend:
         return WorkerStatus.FAILED
 
 
+class _BlockingReviewThenRepairBackend(FakeCodingBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.repair_calls = 0
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        if request.role == "reviewer":
+            return WorkerResult(
+                worker_id=request.worker_id,
+                thread_id=handle.thread_id,
+                summary=(
+                    "VERDICT: fail\n"
+                    "BLOCKING: true\n"
+                    "FINDING: severity=critical; category=correctness; "
+                    "description=阻塞问题; recommendation=修复后重新 review"
+                ),
+            )
+        if request.role == "repairer":
+            self.repair_calls += 1
+        return super().continue_worker(handle, request)
+
+
 def test_contextual_workflow_graph_stops_after_worker_failure(tmp_path) -> None:
     run_id = "run_contextual_graph_worker_failure_000001"
     run_dir = tmp_path / ".coductor" / "runs" / run_id
@@ -266,6 +290,7 @@ def test_contextual_workflow_graph_stops_after_worker_failure(tmp_path) -> None:
         repo=repo,
         artifacts=writer,
         checkpoints=checkpoints,
+        config=config,
         task_execution=TaskExecutionService(tmp_path, config, backend, writer),
         verification=WorkflowVerificationService(tmp_path, config, writer),
         review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
@@ -388,3 +413,47 @@ def test_contextual_workflow_graph_repairs_failed_gate(tmp_path) -> None:
     assert (run_dir / "repairs/R001/repair_request.yaml").exists()
     assert (run_dir / "repairs/R001/repair_result.yaml").exists()
     assert (run_dir / "07_evidence.yaml").exists()
+
+
+def test_contextual_workflow_graph_can_repair_blocking_review_when_enabled(
+    tmp_path,
+) -> None:
+    run_id = "run_contextual_graph_review_repair_000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    repo = ArtifactRepository(run_dir)
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    config.workflow.repair_after_blocking_review = True
+    config.workflow.max_repair_attempts = 1
+    backend = _BlockingReviewThenRepairBackend()
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    checkpoints = WorkflowCheckpointStore(db, tmp_path / ".coductor" / "runs")
+    context = WorkflowRuntimeContext(
+        repo=repo,
+        artifacts=writer,
+        checkpoints=checkpoints,
+        config=config,
+        task_execution=TaskExecutionService(tmp_path, config, backend, writer),
+        verification=WorkflowVerificationService(tmp_path, config, writer),
+        review_delivery=ReviewDeliveryService(tmp_path, config, backend, writer),
+        repair=RepairService(tmp_path, config, backend, writer),
+    )
+    compiled = build_workflow_graph(context=context).compile()
+
+    result = compiled.invoke(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            raw_goal="修复示例函数并补充测试",
+            requested_mode="solo",
+            run_dir=run_dir.as_posix(),
+            max_repair_attempts=config.workflow.max_repair_attempts,
+        )
+    )
+
+    assert result["repair_attempts"] == 1
+    assert backend.repair_calls == 1
+    assert (run_dir / "repairs/R001/repair_request.yaml").exists()
+    assert (run_dir / "repairs/R001/repair_result.yaml").exists()

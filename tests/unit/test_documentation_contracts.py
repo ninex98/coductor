@@ -32,3 +32,16 @@ def test_docs_describe_contextual_graph_as_current_orchestrator() -> None:
     assert "WorkflowGraphRunner 负责当前垂直切片" not in docs
     assert "真实阶段副作用仍由服务层执行" not in docs
     assert "后续会把各阶段副作用继续迁入薄节点" not in docs
+
+
+def test_docs_describe_local_web_console_security_contract() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    security = (ROOT / "docs" / "security.md").read_text(encoding="utf-8")
+    docs = "\n".join([readme, security])
+
+    assert "coductor serve" in docs
+    assert "127.0.0.1" in docs
+    assert "--allow-lan" in docs
+    assert "不需要额外 Web 运行依赖" in readme
+    assert "不会替代 CLI 或固定 YAML Artifact" in readme
+    assert "不提供任意 shell" in docs

@@ -40,6 +40,10 @@ SUCCESS_STAGE_ARTIFACTS = [
     StageArtifact("prepare_evidence", "07_evidence.yaml", ArtifactType.EVIDENCE_BUNDLE),
 ]
 
+CONTROL_STAGE_ARTIFACTS = [
+    StageArtifact("prepare_release", "08_release_manifest.yaml", ArtifactType.RELEASE_MANIFEST),
+]
+
 REPAIR_STAGE_ARTIFACTS = [
     StageArtifact(
         "repair_failure",

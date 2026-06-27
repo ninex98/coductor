@@ -49,6 +49,17 @@ class UsageReportingBackend(FakeCodingBackend):
         )
 
 
+class RecordingBackend(FakeCodingBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.builder_ids: list[str] = []
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        if request.role == "builder":
+            self.builder_ids.append(request.worker_id)
+        return super().continue_worker(handle, request)
+
+
 def test_task_execution_service_dispatches_pipeline_tasks_with_contracts(tmp_path):
     config = CoductorConfig.default()
     config.backend.provider = "fake"
@@ -247,3 +258,65 @@ def test_task_execution_service_records_worker_usage_metrics(tmp_path):
     assert usage["total_tokens"] == 49
     assert usage["estimated"] is False
     assert isinstance(usage["duration_ms"], int)
+
+
+def test_parallel_execution_skips_completed_task_ids_on_resume(tmp_path):
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.workflow.require_plan_approval_for_parallel = False
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    goal = writer.write_goal(repo, "run_abc", "并行更新文档和示例", ExecutionMode.PARALLEL)
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.PARALLEL)
+    backend = RecordingBackend()
+    service = TaskExecutionService(tmp_path, config, backend, writer)
+
+    executed = service.execute_plan_tasks(
+        repo,
+        "run_abc",
+        plan,
+        on_dispatch=lambda *_: None,
+        skip_task_ids={"T001"},
+    )
+
+    assert [task.task_id for task in executed] == ["T002"]
+    assert backend.builder_ids == ["worker_T002"]
+    assert not (tmp_path / "tasks/T001/worker_result.yaml").exists()
+    assert (tmp_path / "tasks/T002/worker_result.yaml").exists()
+
+
+def test_parallel_execution_reuses_existing_worker_result_when_checkpoint_lagged(tmp_path):
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.workflow.require_plan_approval_for_parallel = False
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    goal = writer.write_goal(repo, "run_abc", "并行更新文档和示例", ExecutionMode.PARALLEL)
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.PARALLEL)
+    backend = RecordingBackend()
+    service = TaskExecutionService(tmp_path, config, backend, writer)
+    service.execute_plan_task(
+        repo,
+        "run_abc",
+        plan,
+        plan.data.tasks[0],
+        {},
+        on_dispatch=lambda *_: None,
+    )
+    backend.builder_ids.clear()
+
+    executed = service.execute_plan_tasks(
+        repo,
+        "run_abc",
+        plan,
+        on_dispatch=lambda *_: None,
+    )
+
+    assert [task.task_id for task in executed] == ["T001", "T002"]
+    assert backend.builder_ids == ["worker_T002"]
+    assert (tmp_path / "tasks/T001/worker_result.yaml").exists()
+    assert (tmp_path / "tasks/T002/worker_result.yaml").exists()

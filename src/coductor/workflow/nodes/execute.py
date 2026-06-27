@@ -61,6 +61,7 @@ def dispatch_tasks_node(
                 state.run_id,
                 plan,
                 on_dispatch=record_dispatch,
+                skip_task_ids=set(state.completed_task_ids),
             )
             failed_task_ids = context.task_execution.failed_task_ids(
                 context.repo,

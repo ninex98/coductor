@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from coductor.workflow.stage_artifacts import (
+    CONTROL_STAGE_ARTIFACTS,
     FAILURE_STOPS_BEFORE,
     REPAIR_STAGE_ARTIFACTS,
     SUCCESS_STAGE_ARTIFACTS,
@@ -31,6 +32,12 @@ def test_repair_stage_artifacts_define_fixed_yaml_contract() -> None:
         "repairs/{repair_id}/repair_request.yaml",
         "repairs/{repair_id}/repair_result.yaml",
     ]
+
+
+def test_control_stage_artifacts_define_fixed_yaml_contract() -> None:
+    paths = artifact_paths(CONTROL_STAGE_ARTIFACTS)
+
+    assert paths == ["08_release_manifest.yaml"]
 
 
 def test_worker_failure_stops_before_downstream_artifacts() -> None:

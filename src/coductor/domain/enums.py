@@ -32,6 +32,7 @@ class ArtifactType(StrEnum):
     REPAIR_RESULT = "repair_result"
     REVIEW_REPORT = "review_report"
     EVIDENCE_BUNDLE = "evidence_bundle"
+    RELEASE_MANIFEST = "release_manifest"
 
 
 class ArtifactStatus(StrEnum):

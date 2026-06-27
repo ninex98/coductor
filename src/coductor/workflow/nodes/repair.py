@@ -28,6 +28,25 @@ def repair_failure_node(
             or target_task_id is None
         ):
             raise ValueError("repair_failure_node requires repair context")
+        existing_repair_id = f"R{state.repair_attempts:03d}" if state.repair_attempts else ""
+        if existing_repair_id:
+            request_path = f"repairs/{existing_repair_id}/repair_request.yaml"
+            result_path = f"repairs/{existing_repair_id}/repair_result.yaml"
+            if (context.repo.root / request_path).exists() and (
+                context.repo.root / result_path
+            ).exists():
+                state.artifacts[f"repair_request_{existing_repair_id}"] = request_path
+                state.artifacts[f"repair_result_{existing_repair_id}"] = result_path
+                state.current_stage = "run_quality_gates"
+                context.save(state)
+                return {
+                    "current_stage": "run_quality_gates",
+                    "repair_attempts": state.repair_attempts,
+                    "artifacts": {
+                        f"repair_request_{existing_repair_id}": request_path,
+                        f"repair_result_{existing_repair_id}": result_path,
+                    },
+                }
         state.repair_attempts += 1
         state.current_stage = "repair_failure"
         context.save(state)

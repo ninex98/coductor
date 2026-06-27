@@ -86,6 +86,22 @@ def _route_after_review(state: WorkflowState) -> str:
     return "prepare_evidence"
 
 
+def _route_after_review_with_context(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], str]:
+    def route(state: WorkflowState) -> str:
+        if (
+            context.config is not None
+            and context.config.workflow.repair_after_blocking_review
+            and not state.review_passed
+            and state.repair_attempts < state.max_repair_attempts
+        ):
+            return "repair_failure"
+        return "prepare_evidence"
+
+    return route
+
+
 def _entry_node(state: WorkflowState) -> str:
     if state.current_stage in WORKFLOW_NODES:
         return state.current_stage
@@ -201,7 +217,10 @@ def build_workflow_graph(
     graph.add_edge("integrate_changes", "run_quality_gates")
     graph.add_conditional_edges("run_quality_gates", _route_after_gates)
     graph.add_edge("repair_failure", "run_quality_gates")
-    graph.add_conditional_edges("run_independent_review", _route_after_review)
+    graph.add_conditional_edges(
+        "run_independent_review",
+        _route_after_review_with_context(context) if context is not None else _route_after_review,
+    )
     graph.add_edge("prepare_evidence", END)
     return graph
 

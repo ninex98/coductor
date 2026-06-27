@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from coductor.artifacts.serializer import dump_yaml, load_yaml
 from coductor.config.models import CoductorConfig, QualityGateConfig
+from coductor.repository.node import node_package_manager, node_script_command, node_scripts
+from coductor.repository.python import pyproject_tools
 
 
 def load_config(root: Path) -> CoductorConfig:
@@ -37,28 +37,65 @@ def _discover_quality_gates(root: Path) -> list[QualityGateConfig]:
     package_json = root / "package.json"
     composer_json = root / "composer.json"
     if pyproject.exists():
-        gates.append(
-            QualityGateConfig(
-                id="unit_tests",
-                command=f"{sys.executable} -m pytest -q",
-                timeout_seconds=300,
+        tools = pyproject_tools(pyproject)
+        if "pytest" in tools:
+            gates.append(
+                QualityGateConfig(
+                    id="python_tests",
+                    command=f"{sys.executable} -m pytest -q",
+                    timeout_seconds=300,
+                )
             )
-        )
+        if "ruff" in tools:
+            gates.append(
+                QualityGateConfig(
+                    id="python_lint",
+                    command="ruff check .",
+                    timeout_seconds=120,
+                )
+            )
+        if "mypy" in tools:
+            gates.append(
+                QualityGateConfig(
+                    id="python_typecheck",
+                    command="mypy src",
+                    timeout_seconds=180,
+                )
+            )
     if package_json.exists():
-        try:
-            package = json.loads(package_json.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            package = {}
-        scripts: dict[str, Any] = package.get("scripts", {}) if isinstance(package, dict) else {}
+        scripts = node_scripts(root)
+        package_manager = node_package_manager(root)
         if "test" in scripts:
-            gates.append(QualityGateConfig(id="npm_test", command="npm test", timeout_seconds=300))
+            gates.append(
+                QualityGateConfig(
+                    id="node_test",
+                    command=node_script_command(package_manager, "test"),
+                    timeout_seconds=300,
+                )
+            )
         if "lint" in scripts:
             gates.append(
-                QualityGateConfig(id="npm_lint", command="npm run lint", timeout_seconds=180)
+                QualityGateConfig(
+                    id="node_lint",
+                    command=node_script_command(package_manager, "lint"),
+                    timeout_seconds=180,
+                )
+            )
+        if "typecheck" in scripts:
+            gates.append(
+                QualityGateConfig(
+                    id="node_typecheck",
+                    command=node_script_command(package_manager, "typecheck"),
+                    timeout_seconds=180,
+                )
             )
         if "build" in scripts:
             gates.append(
-                QualityGateConfig(id="npm_build", command="npm run build", timeout_seconds=300)
+                QualityGateConfig(
+                    id="node_build",
+                    command=node_script_command(package_manager, "build"),
+                    timeout_seconds=300,
+                )
             )
     if composer_json.exists():
         gates.append(

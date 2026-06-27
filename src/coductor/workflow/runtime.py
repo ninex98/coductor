@@ -13,6 +13,7 @@ from coductor.artifacts.models import (
     ReviewReportData,
 )
 from coductor.artifacts.repository import ArtifactRepository
+from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ExecutionMode, ExecutionStrategy
 from coductor.services.repair_service import RepairService
 from coductor.services.review_delivery_service import ReviewDeliveryService
@@ -28,6 +29,7 @@ class WorkflowRuntimeContext:
     repo: ArtifactRepository
     artifacts: WorkflowArtifactWriter
     checkpoints: WorkflowCheckpointStore
+    config: CoductorConfig | None = None
     task_execution: TaskExecutionService | None = None
     verification: WorkflowVerificationService | None = None
     review_delivery: ReviewDeliveryService | None = None

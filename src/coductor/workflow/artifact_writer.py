@@ -139,6 +139,8 @@ class WorkflowArtifactWriter:
             risks=snapshot.data.risks,
             unresolved_questions=[],
         )
+        if self.config.workflow.require_spec_approval:
+            data.approval.required = True
         envelope = self.envelope(
             run_id=run_id,
             artifact_type=ArtifactType.SPECIFICATION,

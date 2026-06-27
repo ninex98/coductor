@@ -74,12 +74,23 @@ class TaskExecutionService:
         plan: ArtifactEnvelope[Any],
         *,
         on_dispatch: Callable[[str, WorkerHandle], None],
+        skip_task_ids: set[str] | None = None,
     ) -> list[ExecutedTask]:
+        skip_task_ids = set(skip_task_ids or set())
+        skip_task_ids.update(self.completed_task_ids_from_artifacts(repo, plan.data.tasks))
         if str(plan.data.strategy) == ExecutionStrategy.PARALLEL:
-            return self.execute_parallel_plan_tasks(repo, run_id, plan, on_dispatch=on_dispatch)
+            return self.execute_parallel_plan_tasks(
+                repo,
+                run_id,
+                plan,
+                on_dispatch=on_dispatch,
+                skip_task_ids=skip_task_ids,
+            )
         executed: list[ExecutedTask] = []
         contracts: dict[str, ContractArtifact] = {}
         for plan_task in self.tasks_in_dependency_order(plan.data.tasks):
+            if plan_task.id in skip_task_ids:
+                continue
             executed_task = self.execute_plan_task(
                 repo,
                 run_id,
@@ -99,10 +110,18 @@ class TaskExecutionService:
         plan: ArtifactEnvelope[Any],
         *,
         on_dispatch: Callable[[str, WorkerHandle], None],
+        skip_task_ids: set[str] | None = None,
     ) -> list[ExecutedTask]:
         executed: list[ExecutedTask] = []
-        completed: set[str] = set()
-        remaining = {task.id: task for task in plan.data.tasks}
+        completed = set(skip_task_ids or set())
+        remaining = {
+            task.id: task
+            for task in plan.data.tasks
+            if task.id not in completed
+        }
+        for task in self.tasks_in_dependency_order(plan.data.tasks):
+            if task.id in completed and self.has_completed_task_artifact(repo, task.id):
+                executed.append(self.executed_task_from_artifact(repo, task.id))
         max_workers = max(1, self.config.workflow.max_parallel_workers)
         while remaining:
             ready = [
@@ -170,6 +189,54 @@ class TaskExecutionService:
             executed.append(executed_task)
             contracts.update(executed_task.produced_contracts)
         return executed
+
+    def executed_task_from_artifact(
+        self,
+        repo: ArtifactRepository,
+        task_id: str,
+    ) -> ExecutedTask:
+        result = repo.read(f"tasks/{task_id}/worker_result.yaml", ArtifactType.WORKER_RESULT)
+        data = WorkerResultData.model_validate(result.data)
+        return ExecutedTask(
+            task_id,
+            WorkerHandle(worker_id=data.worker_id, thread_id=data.thread_id),
+        )
+
+    def completed_task_ids_from_artifacts(
+        self,
+        repo: ArtifactRepository,
+        tasks: list[PlanTask],
+    ) -> set[str]:
+        completed: set[str] = set()
+        for task in tasks:
+            result_path = f"tasks/{task.id}/worker_result.yaml"
+            patch_path = repo.root / f"tasks/{task.id}/patch.diff"
+            if not patch_path.exists():
+                continue
+            try:
+                result = repo.read(result_path, ArtifactType.WORKER_RESULT)
+            except (OSError, ValueError):
+                continue
+            data = WorkerResultData.model_validate(result.data)
+            if data.exit_reason == "completed":
+                completed.add(task.id)
+        return completed
+
+    def has_completed_task_artifact(
+        self,
+        repo: ArtifactRepository,
+        task_id: str,
+    ) -> bool:
+        result_path = repo.root / f"tasks/{task_id}/worker_result.yaml"
+        patch_path = repo.root / f"tasks/{task_id}/patch.diff"
+        if not result_path.exists() or not patch_path.exists():
+            return False
+        try:
+            result = repo.read(result_path, ArtifactType.WORKER_RESULT)
+        except (OSError, ValueError):
+            return False
+        data = WorkerResultData.model_validate(result.data)
+        return data.exit_reason == "completed"
 
     def execute_plan_task(
         self,

@@ -30,6 +30,7 @@ class WorkflowConfig(ConfigModel):
     max_parallel_workers: int = 2
     require_spec_approval: bool = False
     require_plan_approval_for_parallel: bool = True
+    repair_after_blocking_review: bool = False
 
 
 class PermissionConfig(ConfigModel):

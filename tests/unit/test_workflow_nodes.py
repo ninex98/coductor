@@ -940,6 +940,52 @@ def test_run_independent_review_node_reuses_existing_review_when_resuming(
     assert saved.artifacts["06_review"] == "06_review.yaml"
 
 
+def test_run_independent_review_node_reruns_after_repair_result_exists(
+    tmp_path,
+) -> None:
+    run_id = "run_review_after_repair_00000001"
+    run_dir, repo, writer, checkpoints, context = _runtime_context(tmp_path, run_id)
+    _write_review_report(repo, writer, run_id, passed=False)
+    state = WorkflowState(
+        run_id=run_id,
+        status=RunStatus.RUNNING,
+        raw_goal="修复示例函数",
+        requested_mode="auto",
+        run_dir=run_dir.as_posix(),
+        artifacts={"repair_result_R001": "repairs/R001/repair_result.yaml"},
+        repair_attempts=1,
+        max_repair_attempts=2,
+    )
+    review_calls = 0
+
+    def write_review():
+        nonlocal review_calls
+
+        review_calls += 1
+        _write_review_report(repo, writer, run_id, passed=True)
+        from coductor.artifacts.models import ArtifactEnvelope
+
+        return ArtifactEnvelope[ReviewReportData].model_validate(
+            repo.read("06_review.yaml", ArtifactType.REVIEW_REPORT).model_dump(
+                mode="json"
+            )
+        )
+
+    patch = run_independent_review_node(state, context=context, review=write_review)
+
+    assert review_calls == 1
+    assert patch == {
+        "current_stage": "run_independent_review",
+        "artifacts": {"06_review": "06_review.yaml"},
+        "review_passed": True,
+    }
+    saved = checkpoints.load(run_id)
+    assert saved is not None
+    assert saved.review_passed is True
+    assert saved.artifacts["repair_result_R001"] == "repairs/R001/repair_result.yaml"
+    assert saved.artifacts["06_review"] == "06_review.yaml"
+
+
 def test_prepare_evidence_node_saves_evidence_when_runtime_context_is_present(tmp_path) -> None:
     run_id = "run_evidence_node_0000000000000001"
     run_dir = tmp_path / ".coductor" / "runs" / run_id

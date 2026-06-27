@@ -18,7 +18,7 @@ def run_independent_review_node(
 ) -> dict[str, object]:
     if context is not None:
         review_path = "06_review.yaml"
-        if (context.repo.root / review_path).exists():
+        if (context.repo.root / review_path).exists() and not _has_repair_result(state):
             review_report = ArtifactEnvelope[ReviewReportData].model_validate(
                 context.repo.read(review_path, ArtifactType.REVIEW_REPORT).model_dump(
                     mode="json"
@@ -54,3 +54,7 @@ def run_independent_review_node(
 def review_next_stage(review: ReviewReportData) -> str:
     del review
     return "prepare_evidence"
+
+
+def _has_repair_result(state: WorkflowState) -> bool:
+    return any(key.startswith("repair_result_") for key in state.artifacts)

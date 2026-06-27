@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from coductor.artifacts.hashing import file_sha256
@@ -12,6 +13,8 @@ from coductor.artifacts.models import (
 )
 from coductor.config.models import CoductorConfig
 from coductor.repository.git import current_commit, is_dirty
+from coductor.repository.node import node_package_manager, node_script_command, node_scripts
+from coductor.repository.python import pyproject_tools
 
 
 class RepositoryInspector:
@@ -87,13 +90,24 @@ class RepositoryInspector:
         paths = {manifest.path for manifest in manifests}
         commands = DiscoveredCommands()
         if "pyproject.toml" in paths:
-            commands.test.append("pytest -q")
-            commands.lint.append("ruff check .")
-            commands.typecheck.append("mypy src")
+            tools = pyproject_tools(self.root / "pyproject.toml")
+            if "pytest" in tools:
+                commands.test.append(f"{sys.executable} -m pytest -q")
+            if "ruff" in tools:
+                commands.lint.append("ruff check .")
+            if "mypy" in tools:
+                commands.typecheck.append("mypy src")
         if "package.json" in paths:
-            commands.test.append("npm test")
-            commands.lint.append("npm run lint")
-            commands.build.append("npm run build")
+            package_manager = node_package_manager(self.root)
+            scripts = node_scripts(self.root)
+            if "test" in scripts:
+                commands.test.append(node_script_command(package_manager, "test"))
+            if "lint" in scripts:
+                commands.lint.append(node_script_command(package_manager, "lint"))
+            if "typecheck" in scripts:
+                commands.typecheck.append(node_script_command(package_manager, "typecheck"))
+            if "build" in scripts:
+                commands.build.append(node_script_command(package_manager, "build"))
         return commands
 
     def _documents(self) -> list[str]:

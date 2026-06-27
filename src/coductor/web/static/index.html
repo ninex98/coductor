@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Coductor Console</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="app" class="coductor-shell">
+      <aside class="run-rail">
+        <div class="brand-block">
+          <div class="brand-mark">CODUCTOR</div>
+          <div class="brand-subtitle">Local workflow console</div>
+        </div>
+        <div class="rail-toolbar">
+          <button id="refreshRuns" class="ghost-button" type="button">Refresh</button>
+        </div>
+        <div id="runList" class="run-list" aria-live="polite"></div>
+      </aside>
+      <section class="workspace-panel">
+        <header class="top-bar">
+          <div>
+            <div class="eyebrow">Project Root</div>
+            <h1 id="projectRoot">Loading...</h1>
+          </div>
+          <div id="healthBadge" class="health-badge">Starting</div>
+        </header>
+        <nav class="view-tabs" aria-label="Console views">
+          <button class="tab-button is-active" type="button" data-tab="overview">Overview</button>
+          <button class="tab-button" type="button" data-tab="artifacts">Artifacts</button>
+          <button class="tab-button" type="button" data-tab="timeline">Timeline</button>
+          <button class="tab-button" type="button" data-tab="logs">Logs</button>
+          <button class="tab-button" type="button" data-tab="evidence">Evidence</button>
+          <button class="tab-button" type="button" data-tab="release">Release</button>
+          <button class="tab-button" type="button" data-tab="doctor">Doctor</button>
+        </nav>
+        <section id="runDetail" class="detail-grid">
+          <div class="empty-state">
+            <div class="empty-title">Select a run</div>
+            <p>Run history, artifacts, logs, evidence, and release state will appear here.</p>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

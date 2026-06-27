@@ -4,24 +4,35 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Annotated, Any
 
-from coductor.artifacts.models import ArtifactEnvelope, ExecutionPlanData, GateReportData, GoalData
+from coductor.artifacts.models import (
+    ArtifactEnvelope,
+    ExecutionPlanData,
+    GateReportData,
+    GoalData,
+    SpecificationData,
+)
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.serializer import dump_yaml
-from coductor.backends.factory import create_backend
+from coductor.backends.capabilities import describe_backend_capability, effective_backend_provider
+from coductor.backends.factory import create_backend, is_codex_sdk_available, resolve_codex_bin
 from coductor.config.loader import discover_config, load_config, write_config
 from coductor.constants import CODUCTOR_DIR, VERSION
 from coductor.domain.enums import ArtifactType, ExecutionMode, ExecutionStrategy, RunStatus
 from coductor.exceptions import CoductorError
+from coductor.services.release_service import ReleaseService
 from coductor.services.report_service import CONTROL_STATUS, ReportService, RunReportError
 from coductor.services.review_delivery_service import ReviewDeliveryService
-from coductor.services.run_service import RunService
+from coductor.services.run_service import RUN_LOCK_STALE_AFTER_SECONDS, RunService
 from coductor.services.workflow_verification_service import WorkflowVerificationService
 from coductor.storage.database import Database
+from coductor.web.server import ServeOptionsError, serve_console
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.checkpoint import WorkflowCheckpointStore
 from coductor.workflow.langgraph_checkpoint import LangGraphCheckpointStore
@@ -41,8 +52,19 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 console = Console() if Console is not None else None
+CLI_BANNER = r"""
+       __                         CODUCTOR
+      /  \__                      AI Coding Workflow Engine
+     /      \___
+    /  /\       \                 From goal to verified change.
+   /__/  \___    \
+          /  \____\               init    prepare project
+         /__/  /__/               run     verified workflow
+                                   status  inspect run state
+"""
+
 CLI_HELP = """
-Coductor / 确定性 AI Coding 工作流引擎
+CODUCTOR / 确定性 AI Coding 工作流引擎
 
 From goal to verified change. 把自然语言研发目标转成可审计、可恢复、可验证的工程流程。
 
@@ -55,6 +77,8 @@ Quick start / 快速开始:
   coductor logs <RUN_ID>
   coductor explain <RUN_ID>
   coductor report <RUN_ID>
+  coductor release <RUN_ID>
+  coductor serve
 
 Common commands / 常用命令:
   init       初始化当前项目 / Initialize a project
@@ -64,6 +88,8 @@ Common commands / 常用命令:
   logs       查看事件日志 / Show run event logs
   explain    解释状态和下一步 / Explain state and next command
   report     查看交付报告 / Show delivery report
+  release    生成发布清单 / Generate release manifest
+  serve      启动本地 Web 控制台 / Start local Web console
   doctor     检查安装与安全默认值 / Check installation and defaults
 """
 
@@ -90,6 +116,8 @@ def _print_plain(message: str) -> None:
 
 
 def print_quick_start() -> None:
+    _print_plain(CLI_BANNER.strip())
+    _print_plain("")
     _print(CLI_HELP.strip())
 
 
@@ -139,7 +167,16 @@ def run_goal(
     if backend:
         config.backend.provider = backend
     if dry_run:
-        _print("dry-run: 将执行 Goal → Inspect → Spec → Plan，但不会启动 Worker。")
+        result = RunService(root, config, progress=_print_progress).dry_run(
+            goal,
+            mode=ExecutionMode(mode),
+        )
+        _print("dry-run: 已生成前置计划，不会启动 Worker。")
+        _print(f"Run ID: {result.run_id}")
+        _print(f"状态: {result.status}")
+        _print(f"计划产物: {Path(result.run_dir) / '03_execution_plan.yaml'}")
+        _print(f"下一步: coductor artifacts {result.run_id}")
+        _print(f"继续执行: coductor resume {result.run_id}")
         return
     result = RunService(root, config, progress=_print_progress).run(
         goal,
@@ -210,8 +247,25 @@ def status_run(
     run_id: str | None = None,
     watch: bool = False,
     json_output: bool = False,
+    watch_count: int | None = None,
+    watch_interval_seconds: float = 2.0,
 ) -> None:
-    del watch
+    if watch:
+        count = 0
+        while True:
+            _render_status_once(run_id, json_output)
+            count += 1
+            if watch_count is not None and count >= watch_count:
+                return
+            time.sleep(watch_interval_seconds)
+    else:
+        _render_status_once(run_id, json_output)
+
+
+def _render_status_once(
+    run_id: str | None = None,
+    json_output: bool = False,
+) -> None:
     root = _root(".")
     db = _db(root)
     row = db.get_run(run_id) if run_id else db.latest_run()
@@ -321,26 +375,50 @@ def control_run(run_id: str, command: str) -> None:
     db = _db(root)
     service = ReportService(db)
     try:
-        service.validate_control_command(run_id, command)
+        service.run_context(run_id, command)
     except RunReportError as error:
         _exit_with_report_error(service, error)
-    if command == "verify":
-        _rerun_verification(root, db, run_id)
+    owner = f"control:{command}:{os.getpid()}"
+    if not db.acquire_run_lock(
+        run_id,
+        owner,
+        now=_utc_now(),
+        stale_after_seconds=RUN_LOCK_STALE_AFTER_SECONDS,
+    ):
+        _exit_with_report_error(
+            service,
+            RunReportError(
+                run_id=run_id,
+                stage=command,
+                recoverable=True,
+                next_command=f"coductor status {run_id}",
+                message=f"run {run_id} is already locked by another operation",
+            ),
+        )
+    try:
+        try:
+            service.validate_control_command(run_id, command)
+        except RunReportError as error:
+            _exit_with_report_error(service, error)
+        if command == "verify":
+            _rerun_verification(root, db, run_id)
+            _print(service.control_result(run_id, command))
+            return
+        if command == "review":
+            _rerun_review(root, db, run_id)
+            _print(service.control_result(run_id, command))
+            return
+        if command == "approve":
+            _approve_run(root, db, run_id)
+            _print(service.control_result(run_id, command))
+            return
+        status = CONTROL_STATUS[command]
+        now = _utc_now()
+        db.update_run_status(run_id, status, now)
+        db.add_event(run_id, command, f"{command} requested by cli", now)
         _print(service.control_result(run_id, command))
-        return
-    if command == "review":
-        _rerun_review(root, db, run_id)
-        _print(service.control_result(run_id, command))
-        return
-    if command == "approve":
-        _approve_run(root, db, run_id)
-        _print(service.control_result(run_id, command))
-        return
-    status = CONTROL_STATUS[command]
-    now = _utc_now()
-    db.update_run_status(run_id, status, now)
-    db.add_event(run_id, command, f"{command} requested by cli", now)
-    _print(service.control_result(run_id, command))
+    finally:
+        db.release_run_lock(run_id, owner)
 
 
 def approve_run(run_id: str) -> None:
@@ -363,11 +441,98 @@ def review_run(run_id: str) -> None:
     control_run(run_id, "review")
 
 
+def release_run(run_id: str) -> None:
+    root = _root(".")
+    db = _db(root)
+    service = ReportService(db)
+    try:
+        row = service.run_context(run_id, "release")
+    except RunReportError as error:
+        _exit_with_report_error(service, error)
+    if row["status"] != RunStatus.READY_FOR_HUMAN_REVIEW:
+        _exit_with_report_error(
+            service,
+            RunReportError(
+                run_id=run_id,
+                stage="release",
+                recoverable=True,
+                next_command=f"coductor status {run_id}",
+                message=f"cannot release run in status {row['status']}",
+            ),
+        )
+    owner = f"control:release:{os.getpid()}"
+    if not db.acquire_run_lock(
+        run_id,
+        owner,
+        now=_utc_now(),
+        stale_after_seconds=RUN_LOCK_STALE_AFTER_SECONDS,
+    ):
+        _exit_with_report_error(
+            service,
+            RunReportError(
+                run_id=run_id,
+                stage="release",
+                recoverable=True,
+                next_command=f"coductor status {run_id}",
+                message=f"run {run_id} is already locked by another operation",
+            ),
+        )
+    try:
+        config = load_config(root)
+        repo = ArtifactRepository(Path(row["run_dir"]))
+        manifest = ReleaseService(
+            root,
+            db,
+            WorkflowArtifactWriter(root, config),
+        ).create_manifest(repo, run_id)
+        _print(
+            "\n".join(
+                [
+                    f"Run ID: {run_id}",
+                    "Stage: release",
+                    "Recoverable: yes",
+                    f"Next command: coductor report {run_id}",
+                    "",
+                    f"Manifest: {repo.root / '08_release_manifest.yaml'}",
+                    f"Status: {manifest.data.status}",
+                    f"Ready: {'yes' if manifest.data.safety.ready else 'no'}",
+                    "Remote actions: disabled",
+                ]
+            )
+            + "\n"
+        )
+    finally:
+        db.release_run_lock(run_id, owner)
+
+
+def serve_web_console(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = False,
+    allow_lan: bool = False,
+) -> None:
+    try:
+        serve_console(
+            _root("."),
+            host=host,
+            port=port,
+            open_browser=open_browser,
+            allow_lan=allow_lan,
+        )
+    except ServeOptionsError as error:
+        _print(str(error))
+        if typer is not None:
+            raise typer.Exit(code=1) from error
+        raise SystemExit(1) from error
+
+
 def _approve_run(root: Path, db: Database, run_id: str) -> None:
     row = db.get_run(run_id)
     if row is None:
         return
     repo = ArtifactRepository(Path(row["run_dir"]))
+    if _approve_spec_if_required(root, db, repo, run_id, row["run_dir"]):
+        return
     plan_path = repo.root / "03_execution_plan.yaml"
     now = _utc_now()
     if not plan_path.exists():
@@ -388,6 +553,50 @@ def _approve_run(root: Path, db: Database, run_id: str) -> None:
     state = _approval_resume_state(db, root, run_id, row["run_dir"])
     WorkflowCheckpointStore(db, root / CODUCTOR_DIR / "runs").save(state, now)
     LangGraphCheckpointStore(db.path).save(state)
+
+
+def _approve_spec_if_required(
+    root: Path,
+    db: Database,
+    repo: ArtifactRepository,
+    run_id: str,
+    run_dir: str,
+) -> bool:
+    spec_path = repo.root / "02_spec.yaml"
+    if not spec_path.exists():
+        return False
+    spec = ArtifactEnvelope[SpecificationData].model_validate(
+        repo.read("02_spec.yaml", ArtifactType.SPECIFICATION).model_dump(mode="json")
+    )
+    if not spec.data.approval.required or spec.data.approval.approved_by:
+        return False
+    spec.data.approval.approved_by = "cli"
+    repo.write_next_revision("02_spec.yaml", spec)
+    now = _utc_now()
+    db.update_run_status(run_id, RunStatus.RUNNING, now)
+    db.add_event(run_id, "approve", "spec approved by cli", now)
+    state = _spec_approval_resume_state(db, root, run_id, run_dir)
+    WorkflowCheckpointStore(db, root / CODUCTOR_DIR / "runs").save(state, now)
+    LangGraphCheckpointStore(db.path).save(state)
+    return True
+
+
+def _spec_approval_resume_state(
+    db: Database,
+    root: Path,
+    run_id: str,
+    run_dir: str,
+) -> WorkflowState:
+    current = LangGraphCheckpointStore(db.path).load(run_id)
+    if current is None:
+        current = WorkflowCheckpointStore(db, root / CODUCTOR_DIR / "runs").load(run_id)
+    state = current or WorkflowState(run_id=run_id)
+    state.status = RunStatus.RUNNING
+    state.current_stage = "create_execution_plan"
+    state.last_error = None
+    state.run_dir = run_dir
+    state.artifacts["02_spec"] = "02_spec.yaml"
+    return state
 
 
 def _approval_resume_state(
@@ -475,6 +684,18 @@ def _completed_task_ids_for_review(repo: ArtifactRepository) -> list[str]:
 def doctor() -> None:
     root = _root(".")
     config_path = root / "coductor.yaml"
+    config = load_config(root) if config_path.exists() else discover_config(root)
+    codex_bin = resolve_codex_bin()
+    sdk_available = is_codex_sdk_available()
+    effective_provider = effective_backend_provider(
+        config.backend.provider,
+        fallback=config.backend.fallback,
+        sdk_available=sdk_available,
+    )
+    capability = describe_backend_capability(
+        effective_provider,
+        sdk_available=sdk_available,
+    )
     checks = {
         "coductor_version": VERSION,
         "python": sys.version.split()[0],
@@ -486,6 +707,16 @@ def doctor() -> None:
             if (root / CODUCTOR_DIR / "coductor.sqlite3").exists()
             else "not initialized"
         ),
+        "backend_provider": config.backend.provider,
+        "backend_effective_provider": effective_provider,
+        "backend_fallback": config.backend.fallback,
+        "codex_exec_bin": codex_bin,
+        "codex_sdk_available": sdk_available,
+        "backend_available": capability.available,
+        "backend_resume_thread": capability.supports_resume_thread,
+        "backend_streaming_logs": capability.supports_streaming_logs,
+        "backend_cancel": capability.supports_cancel,
+        "backend_usage": capability.supports_usage,
         "network_default": "disabled",
         "dangerous_defaults": "git_push=false, pull_request=false",
     }
@@ -549,12 +780,19 @@ if typer is not None:
     def status_command(
         run_id: Annotated[str | None, typer.Argument(help="Run ID，可省略为最新运行")] = None,
         watch: Annotated[bool, typer.Option("--watch", help="持续刷新 / Watch updates")] = False,
+        watch_count: Annotated[
+            int | None,
+            typer.Option(
+                "--watch-count",
+                help="最多刷新次数 / Maximum refresh count",
+            ),
+        ] = None,
         json_output: Annotated[
             bool,
             typer.Option("--json", help="输出机器可读 JSON / Output machine-readable JSON"),
         ] = False,
     ) -> None:
-        status_run(run_id, watch, json_output)
+        status_run(run_id, watch, json_output, watch_count=watch_count)
 
     @app.command("show", help="显示运行摘要 / Show run summary.")  # type: ignore[untyped-decorator]
     def show_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
@@ -614,6 +852,36 @@ if typer is not None:
     def review_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
         review_run(run_id)
 
+    @app.command("release", help="生成发布清单 / Generate release manifest.")  # type: ignore[untyped-decorator]
+    def release_command(run_id: Annotated[str, typer.Argument(help="Run ID")]) -> None:
+        release_run(run_id)
+
+    @app.command("serve", help="启动本地 Web 控制台 / Start local Web console.")  # type: ignore[untyped-decorator]
+    def serve_command(
+        host: Annotated[
+            str,
+            typer.Option("--host", help="监听地址 / Host to bind."),
+        ] = "127.0.0.1",
+        port: Annotated[
+            int,
+            typer.Option("--port", help="监听端口 / Port to bind."),
+        ] = 8765,
+        open_browser: Annotated[
+            bool,
+            typer.Option("--open", help="启动后打开浏览器 / Open browser after start."),
+        ] = False,
+        allow_lan: Annotated[
+            bool,
+            typer.Option("--allow-lan", help="允许非 loopback 监听 / Allow LAN binding."),
+        ] = False,
+    ) -> None:
+        serve_web_console(
+            host=host,
+            port=port,
+            open_browser=open_browser,
+            allow_lan=allow_lan,
+        )
+
     @app.command("doctor", help="检查安装与安全默认值 / Check installation and defaults.")  # type: ignore[untyped-decorator]
     def doctor_command() -> None:
         doctor()
@@ -632,6 +900,7 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     status_parser = sub.add_parser("status")
     status_parser.add_argument("run_id", nargs="?")
     status_parser.add_argument("--watch", action="store_true")
+    status_parser.add_argument("--watch-count", type=int)
     status_parser.add_argument("--json", action="store_true")
     show_parser = sub.add_parser("show")
     show_parser.add_argument("run_id")
@@ -651,6 +920,13 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     for command in ["approve", "pause", "stop", "verify", "review"]:
         parser = sub.add_parser(command)
         parser.add_argument("run_id")
+    release_parser = sub.add_parser("release")
+    release_parser.add_argument("run_id")
+    serve_parser = sub.add_parser("serve")
+    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--open", action="store_true")
+    serve_parser.add_argument("--allow-lan", action="store_true")
     sub.add_parser("doctor")
     args = parser.parse_args(argv)
     if args.command == "init":
@@ -658,7 +934,7 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
     elif args.command == "run":
         run_goal(args.goal, args.mode, args.dry_run, args.backend)
     elif args.command == "status":
-        status_run(args.run_id, args.watch, args.json)
+        status_run(args.run_id, args.watch, args.json, watch_count=args.watch_count)
     elif args.command == "show":
         show_run(args.run_id)
     elif args.command == "resume":
@@ -673,6 +949,10 @@ def _argparse_main(argv: list[str] | None = None) -> None:  # pragma: no cover
         explain_run(args.run_id)
     elif args.command in {"approve", "pause", "stop", "verify", "review"}:
         control_run(args.run_id, args.command)
+    elif args.command == "release":
+        release_run(args.run_id)
+    elif args.command == "serve":
+        serve_web_console(args.host, args.port, args.open, args.allow_lan)
     elif args.command == "doctor":
         doctor()
 

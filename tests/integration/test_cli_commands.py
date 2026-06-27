@@ -26,7 +26,7 @@ def test_cli_root_help_is_bilingual_and_actionable() -> None:
     result = cli_runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    assert "Coductor / 确定性 AI Coding 工作流引擎" in result.output
+    assert "CODUCTOR / 确定性 AI Coding 工作流引擎" in result.output
     assert "Quick start / 快速开始" in result.output
     assert "init       初始化当前项目 / Initialize a project" in result.output
     assert "run        运行研发目标 / Run a coding goal" in result.output
@@ -40,6 +40,10 @@ def test_cli_without_command_shows_quick_start() -> None:
     result = cli_runner.invoke(app, [])
 
     assert result.exit_code == 0
+    assert "CODUCTOR" in result.output
+    assert "__" in result.output
+    assert "/  \\__" in result.output
+    assert "From goal to verified change." in result.output
     assert "Quick start / 快速开始" in result.output
     assert "coductor init" in result.output
     assert "coductor run \"修复示例函数并补充测试\" --backend fake" in result.output
@@ -116,6 +120,34 @@ def test_cli_run_prints_progress_and_next_steps(
     assert "python3 -m http.server 4173 --bind 127.0.0.1 --directory src" in result.output
 
 
+def test_cli_run_dry_run_writes_plan_artifacts_without_workers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(['schema_version: "1.0"', "backend:", "  provider: fake"]) + "\n",
+        encoding="utf-8",
+    )
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["run", "先定义 schema 再实现", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "dry-run" in result.output
+    assert "03_execution_plan.yaml" in result.output
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    row = db.latest_run()
+    assert row is not None
+    assert row["status"] == "human_required"
+    run_dir = Path(row["run_dir"])
+    assert (run_dir / "00_goal.yaml").exists()
+    assert (run_dir / "01_repository_snapshot.yaml").exists()
+    assert (run_dir / "02_spec.yaml").exists()
+    assert (run_dir / "03_execution_plan.yaml").exists()
+    assert not (run_dir / "tasks").exists()
+
+
 def test_cli_init_empty_project_has_no_default_python_gates(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -163,6 +195,20 @@ def test_cli_status_json_includes_checkpoint_state(
     assert payload["checkpoint"]["stale_artifacts"] == [
         "contracts/generated.schema.json: sha256 mismatch"
     ]
+
+
+def test_cli_status_watch_renders_repeated_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["status", "run_abc", "--watch", "--watch-count", "2"])
+
+    assert result.exit_code == 0
+    assert result.output.count("Coductor Run Status") >= 2
 
 
 def _seed_run(root: Path, run_id: str = "run_abc") -> Path:
@@ -441,6 +487,56 @@ def test_cli_control_commands_update_status_and_log_event(
     assert events[-1]["stage"] == command
 
 
+@pytest.mark.parametrize("command", ["approve", "pause", "stop", "verify", "review"])
+def test_cli_control_commands_reject_locked_run_without_side_effects(
+    command: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    initial_status = "human_required" if command in {"approve", "verify", "review"} else "running"
+    db.update_run_status("run_abc", initial_status, "2026-06-24T00:00:02Z")
+    assert db.acquire_run_lock("run_abc", "other-operation:123")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, [command, "run_abc"])
+
+    assert result.exit_code == 1
+    assert "already locked by another operation" in result.output
+    row = db.get_run("run_abc")
+    assert row is not None
+    assert row["status"] == initial_status
+    events = db.list_events("run_abc")
+    assert events[-1]["stage"] == "dispatch_tasks"
+
+
+def test_cli_control_command_takes_over_stale_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.update_run_status("run_abc", "running", "2026-06-24T00:00:02Z")
+    assert db.acquire_run_lock(
+        "run_abc",
+        "crashed-process:123",
+        acquired_at="2000-01-01T00:00:00Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["pause", "run_abc"])
+
+    assert result.exit_code == 0
+    assert "Status: paused" in result.output
+    assert db.get_run_lock("run_abc") is None
+    row = db.get_run("run_abc")
+    assert row is not None
+    assert row["status"] == "paused"
+
+
 def test_cli_approve_marks_parallel_plan_and_resume_continues(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -482,6 +578,59 @@ def test_cli_approve_marks_parallel_plan_and_resume_continues(
         backend=FakeCodingBackend(),
     ).resume(first.run_id)
     assert resumed.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert (run_dir / "07_evidence.yaml").exists()
+
+
+def test_cli_approve_allows_spec_approval_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.workflow.require_spec_approval = True
+    config.quality_gates = []
+    first = RunService(
+        tmp_path,
+        config,
+        backend=FakeCodingBackend(),
+    ).run("修复示例函数")
+    run_dir = Path(first.run_dir)
+    assert first.status == RunStatus.HUMAN_REQUIRED
+    assert (run_dir / "02_spec.yaml").exists()
+    assert not (run_dir / "03_execution_plan.yaml").exists()
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(
+            [
+                'schema_version: "1.0"',
+                "backend:",
+                "  provider: fake",
+                "workflow:",
+                "  require_spec_approval: true",
+                "quality_gates: []",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    approved = cli_runner.invoke(app, ["approve", first.run_id])
+
+    assert approved.exit_code == 0
+    spec = (run_dir / "02_spec.yaml").read_text(encoding="utf-8")
+    assert "approved_by: cli" in spec
+    resumed_config = CoductorConfig.default()
+    resumed_config.backend.provider = "fake"
+    resumed_config.workflow.require_spec_approval = True
+    resumed_config.quality_gates = []
+    resumed = RunService(
+        tmp_path,
+        resumed_config,
+        backend=FakeCodingBackend(),
+    ).resume(first.run_id)
+    assert resumed.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert (run_dir / "03_execution_plan.yaml").exists()
     assert (run_dir / "07_evidence.yaml").exists()
 
 
@@ -576,6 +725,124 @@ def test_cli_review_reruns_review_and_evidence(
     assert row is not None
     assert row["status"] == "ready_for_human_review"
     assert db.list_events("run_abc")[-1]["stage"] == "review"
+
+
+def test_cli_release_writes_release_manifest_without_remote_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("修复示例函数")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    released = cli_runner.invoke(app, ["release", result.run_id])
+
+    assert released.exit_code == 0
+    assert "Stage: release" in released.output
+    assert "08_release_manifest.yaml" in released.output
+    run_dir = Path(result.run_dir)
+    manifest = (run_dir / "08_release_manifest.yaml").read_text(encoding="utf-8")
+    assert "artifact_type: release_manifest" in manifest
+    assert "ready: true" in manifest
+    assert "remote_actions_allowed: false" in manifest
+    assert "git push" not in manifest
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    assert db.list_events(result.run_id)[-1]["stage"] == "release"
+
+
+def test_cli_release_rejects_non_ready_run_without_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_dir = _seed_run(tmp_path)
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.update_run_status("run_abc", "human_required", "2026-06-24T00:00:02Z")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    released = cli_runner.invoke(app, ["release", "run_abc"])
+
+    assert released.exit_code == 1
+    assert "cannot release run in status human_required" in released.output
+    assert not (run_dir / "08_release_manifest.yaml").exists()
+    assert db.list_events("run_abc")[-1]["stage"] == "dispatch_tasks"
+
+
+def test_cli_release_rejects_locked_run_without_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run("修复示例函数")
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    assert db.acquire_run_lock(result.run_id, "other-operation:123")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    released = cli_runner.invoke(app, ["release", result.run_id])
+
+    assert released.exit_code == 1
+    assert "already locked by another operation" in released.output
+    assert not (Path(result.run_dir) / "08_release_manifest.yaml").exists()
+    assert db.list_events(result.run_id)[-1]["stage"] != "release"
+
+
+def test_cli_doctor_reports_backend_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(['schema_version: "1.0"', "backend:", "  provider: codex_exec"]) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "backend_provider: codex_exec" in result.output
+    assert "backend_fallback: codex_exec" in result.output
+    assert "codex_exec_bin:" in result.output
+    assert "codex_sdk_available:" in result.output
+    assert "backend_available: true" in result.output
+    assert "backend_resume_thread:" in result.output
+    assert "backend_streaming_logs:" in result.output
+    assert "backend_cancel:" in result.output
+    assert "backend_usage:" in result.output
+
+
+def test_cli_doctor_reports_effective_backend_when_sdk_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(
+            [
+                'schema_version: "1.0"',
+                "backend:",
+                "  provider: codex_sdk",
+                "  fallback: codex_exec",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "is_codex_sdk_available", lambda: False)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "backend_provider: codex_sdk" in result.output
+    assert "backend_effective_provider: codex_exec" in result.output
+    assert "backend_available: true" in result.output
 
 
 def test_cli_pause_rejects_completed_run_without_changing_status(

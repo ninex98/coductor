@@ -24,6 +24,13 @@ def create_execution_plan_node(
     requested_mode: ExecutionMode | None = None,
 ) -> dict[str, Any]:
     if context is not None:
+        if state.status == RunStatus.HUMAN_REQUIRED:
+            context.save(state)
+            return {
+                "current_stage": state.current_stage,
+                "status": state.status,
+                "last_error": state.last_error,
+            }
         if spec is None or snapshot is None:
             raise ValueError("create_execution_plan_node requires spec and snapshot artifacts")
         plan_path = "03_execution_plan.yaml"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from coductor.artifacts.models import GateReportData, GateResultData
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.serializer import load_yaml
@@ -21,10 +23,22 @@ class UsageRepairBackend(FakeCodingBackend):
         )
 
 
-def test_repair_service_writes_repair_request_and_result(tmp_path):
-    config = CoductorConfig.default()
-    repo = ArtifactRepository(tmp_path)
-    writer = WorkflowArtifactWriter(tmp_path, config)
+class FileChangingRepairBackend(FakeCodingBackend):
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        target = Path(request.workspace_path) / "math_utils.py"
+        target.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        return WorkerResult(
+            worker_id=request.worker_id,
+            thread_id=handle.thread_id,
+            summary="repair changed math_utils.py",
+            files_changed=["math_utils.py"],
+        )
+
+
+def _write_gate_report(
+    repo: ArtifactRepository,
+    writer: WorkflowArtifactWriter,
+) -> GateReportData:
     gate_report = writer.envelope(
         run_id="run_abc",
         artifact_type=ArtifactType.GATE_REPORT,
@@ -52,6 +66,14 @@ def test_repair_service_writes_repair_request_and_result(tmp_path):
         ),
     )
     repo.write("05_gate_report.yaml", gate_report)
+    return gate_report
+
+
+def test_repair_service_writes_repair_request_and_result(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    gate_report = _write_gate_report(repo, writer)
     service = RepairService(tmp_path, config, UsageRepairBackend(), writer)
 
     service.repair(
@@ -72,3 +94,53 @@ def test_repair_service_writes_repair_request_and_result(tmp_path):
     assert repair_result["data"]["usage"]["output_tokens"] == 4
     assert repair_result["data"]["usage"]["total_tokens"] == 24
     assert repair_result["data"]["usage"]["estimated"] is False
+
+
+def test_repair_service_captures_real_patch_diff(tmp_path: Path) -> None:
+    (tmp_path / "math_utils.py").write_text("def add(a, b):\n    return 0\n", encoding="utf-8")
+    config = CoductorConfig.default()
+    repo = ArtifactRepository(tmp_path / ".coductor" / "runs" / "run_abc")
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    gate_report = _write_gate_report(repo, writer)
+    service = RepairService(tmp_path, config, FileChangingRepairBackend(), writer)
+
+    service.repair(
+        repo,
+        "run_abc",
+        WorkerHandle(worker_id="worker_T001", thread_id="thread_builder"),
+        gate_report,
+        attempt=1,
+        target_task_id="T001",
+    )
+
+    patch = (repo.root / "repairs/R001/repair_result.patch").read_text(encoding="utf-8")
+    assert "fake repair result" not in patch
+    assert "diff --git a/math_utils.py b/math_utils.py" in patch
+    assert "-    return 0" in patch
+    assert "+    return a + b" in patch
+
+
+def test_repair_request_does_not_claim_thread_resume_when_backend_cannot_resume(
+    tmp_path: Path,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "codex_exec"
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    gate_report = _write_gate_report(repo, writer)
+    service = RepairService(tmp_path, config, UsageRepairBackend(), writer)
+
+    service.repair(
+        repo,
+        "run_abc",
+        WorkerHandle(worker_id="worker_T001", thread_id="thread_builder"),
+        gate_report,
+        attempt=1,
+        target_task_id="T001",
+    )
+
+    repair_request = load_yaml(
+        (tmp_path / "repairs/R001/repair_request.yaml").read_text(encoding="utf-8")
+    )
+
+    assert repair_request["data"]["resume_thread_id"] is None

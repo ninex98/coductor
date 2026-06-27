@@ -315,6 +315,17 @@ class _RecordingBackend(FakeCodingBackend):
         return super().continue_worker(handle, request)
 
 
+class _RepairRecordingBackend(FakeCodingBackend):
+    def __init__(self, *, repair_side_effect=None) -> None:
+        super().__init__(repair_side_effect=repair_side_effect)
+        self.repair_calls = 0
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        if request.role == "repairer":
+            self.repair_calls += 1
+        return super().continue_worker(handle, request)
+
+
 def test_resume_dispatch_stage_skips_completed_pipeline_tasks(tmp_path: Path) -> None:
     config = CoductorConfig.default()
     config.backend.provider = "fake"
@@ -413,6 +424,58 @@ def test_resume_falls_back_to_legacy_checkpoint_when_langgraph_unavailable(
     assert (run_dir / "07_evidence.yaml").exists()
 
 
+def test_resume_reuses_existing_repair_result_without_calling_repair_worker(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "repair-marker"
+    command = (
+        f'{sys.executable} -c "from pathlib import Path; import sys; '
+        f"p=Path({str(marker)!r}); "
+        'sys.exit(0 if p.exists() else 1)"'
+    )
+    backend = _RepairRecordingBackend(
+        repair_side_effect=lambda: marker.write_text("fixed", encoding="utf-8")
+    )
+    service = RunService(tmp_path, _config(command), backend=backend)
+    first = service.run("修复示例函数并补充测试")
+    assert first.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    run_dir = Path(first.run_dir)
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=first.run_id,
+            status=RunStatus.RUNNING,
+            current_stage="repair_failure",
+            repair_attempts=1,
+            max_repair_attempts=2,
+            raw_goal="修复示例函数并补充测试",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+            artifacts={
+                "00_goal": "00_goal.yaml",
+                "01_repository_snapshot": "01_repository_snapshot.yaml",
+                "02_spec": "02_spec.yaml",
+                "03_execution_plan": "03_execution_plan.yaml",
+                "task_T001": "tasks/T001/task.yaml",
+                "worker_result_T001": "tasks/T001/worker_result.yaml",
+                "05_gate_report": "05_gate_report.yaml",
+                "repair_request_R001": "repairs/R001/repair_request.yaml",
+                "repair_result_R001": "repairs/R001/repair_result.yaml",
+            },
+            completed_task_ids=["T001"],
+        )
+    )
+    backend.repair_calls = 0
+    original_repair = (run_dir / "repairs/R001/repair_result.yaml").read_text(encoding="utf-8")
+
+    result = service.resume(first.run_id)
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result.repair_attempts == 1
+    assert backend.repair_calls == 0
+    repaired_text = (run_dir / "repairs/R001/repair_result.yaml").read_text(encoding="utf-8")
+    assert repaired_text == original_repair
+
+
 def test_resume_rejects_unknown_run_id(tmp_path: Path) -> None:
     service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
 
@@ -420,3 +483,63 @@ def test_resume_rejects_unknown_run_id(tmp_path: Path) -> None:
 
     assert result.status == RunStatus.HUMAN_REQUIRED
     assert "unknown run" in result.message
+
+
+def test_resume_returns_human_required_when_run_lock_is_held(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_locked_resume_000000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="inspect_repository",
+            raw_goal="从 locked 状态恢复",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+    assert service.db.acquire_run_lock(run_id, "test-owner")
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.HUMAN_REQUIRED
+    assert "already locked" in result.message
+    assert not (run_dir / "07_evidence.yaml").exists()
+
+    service.db.release_run_lock(run_id, "test-owner")
+
+
+def test_resume_takes_over_stale_run_lock(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_stale_lock_resume_0000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="inspect_repository",
+            raw_goal="从 stale locked 状态恢复",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+    assert service.db.acquire_run_lock(
+        run_id,
+        "crashed-process:123",
+        acquired_at="2000-01-01T00:00:00Z",
+    )
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert (run_dir / "07_evidence.yaml").exists()
+    assert service.db.get_run_lock(run_id) is None
