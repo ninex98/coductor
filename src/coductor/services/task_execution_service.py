@@ -6,6 +6,7 @@ import difflib
 import fnmatch
 import subprocess
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -72,9 +73,90 @@ class TaskExecutionService:
         *,
         on_dispatch: Callable[[str, WorkerHandle], None],
     ) -> list[ExecutedTask]:
+        if str(plan.data.strategy) == ExecutionStrategy.PARALLEL:
+            return self.execute_parallel_plan_tasks(repo, run_id, plan, on_dispatch=on_dispatch)
         executed: list[ExecutedTask] = []
         contracts: dict[str, ContractArtifact] = {}
         for plan_task in self.tasks_in_dependency_order(plan.data.tasks):
+            executed_task = self.execute_plan_task(
+                repo,
+                run_id,
+                plan,
+                plan_task,
+                contracts,
+                on_dispatch=on_dispatch,
+            )
+            executed.append(executed_task)
+            contracts.update(executed_task.produced_contracts)
+        return executed
+
+    def execute_parallel_plan_tasks(
+        self,
+        repo: ArtifactRepository,
+        run_id: str,
+        plan: ArtifactEnvelope[Any],
+        *,
+        on_dispatch: Callable[[str, WorkerHandle], None],
+    ) -> list[ExecutedTask]:
+        executed: list[ExecutedTask] = []
+        completed: set[str] = set()
+        remaining = {task.id: task for task in plan.data.tasks}
+        max_workers = max(1, self.config.workflow.max_parallel_workers)
+        while remaining:
+            ready = [
+                task
+                for task in remaining.values()
+                if all(dependency in completed for dependency in task.depends_on)
+            ]
+            if not ready:
+                return self.execute_plan_tasks_sequentially(
+                    repo,
+                    run_id,
+                    plan,
+                    on_dispatch=on_dispatch,
+                    skip_task_ids=completed,
+                )
+            ready.sort(key=lambda task: task.id)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        self.execute_plan_task,
+                        repo,
+                        run_id,
+                        plan,
+                        task,
+                        {},
+                        on_dispatch=lambda *_: None,
+                    ): task
+                    for task in ready
+                }
+                batch: list[ExecutedTask] = []
+                for future in as_completed(futures):
+                    batch.append(future.result())
+            self.apply_parallel_patches(repo, plan.data.strategy, batch)
+            batch.sort(key=lambda task: task.task_id)
+            for executed_task in batch:
+                on_dispatch(executed_task.task_id, executed_task.handle)
+                executed.append(executed_task)
+                completed.add(executed_task.task_id)
+                remaining.pop(executed_task.task_id, None)
+        return executed
+
+    def execute_plan_tasks_sequentially(
+        self,
+        repo: ArtifactRepository,
+        run_id: str,
+        plan: ArtifactEnvelope[Any],
+        *,
+        on_dispatch: Callable[[str, WorkerHandle], None],
+        skip_task_ids: set[str] | None = None,
+    ) -> list[ExecutedTask]:
+        executed: list[ExecutedTask] = []
+        contracts: dict[str, ContractArtifact] = {}
+        skip_task_ids = skip_task_ids or set()
+        for plan_task in self.tasks_in_dependency_order(plan.data.tasks):
+            if plan_task.id in skip_task_ids:
+                continue
             executed_task = self.execute_plan_task(
                 repo,
                 run_id,
@@ -263,7 +345,7 @@ class TaskExecutionService:
                 workspace=workspace,
                 before_snapshot=before_snapshot,
             )
-            apply_issues = self._apply_parallel_patch(strategy, patch)
+            apply_issues: list[str] = []
             protected_issues = self.protected_path_issues(result.files_changed, patch)
             exit_reason = "failed" if protected_issues or apply_issues else result.exit_reason
             unresolved_issues = result.unresolved_issues + apply_issues + protected_issues
@@ -303,6 +385,34 @@ class TaskExecutionService:
         repo.write(f"tasks/{task_id}/worker_result.yaml", result_envelope)
         return handle
 
+    def apply_parallel_patches(
+        self,
+        repo: ArtifactRepository,
+        strategy: ExecutionStrategy,
+        executed_tasks: list[ExecutedTask],
+    ) -> None:
+        if str(strategy) != ExecutionStrategy.PARALLEL or not self.worktrees.is_available():
+            return
+        for executed_task in sorted(executed_tasks, key=lambda task: task.task_id):
+            patch = repo.root / f"tasks/{executed_task.task_id}/patch.diff"
+            issues = self._apply_parallel_patch(patch)
+            if issues:
+                self.mark_worker_result_failed(repo, executed_task.task_id, issues)
+
+    def mark_worker_result_failed(
+        self,
+        repo: ArtifactRepository,
+        task_id: str,
+        issues: list[str],
+    ) -> None:
+        relative_path = f"tasks/{task_id}/worker_result.yaml"
+        envelope = repo.read(relative_path, ArtifactType.WORKER_RESULT)
+        data = WorkerResultData.model_validate(envelope.data)
+        data.unresolved_issues.extend(issues)
+        data.exit_reason = "failed"
+        envelope.data = data
+        repo.write_next_revision(relative_path, envelope)
+
     def _worker_workspace(
         self,
         run_id: str,
@@ -324,16 +434,8 @@ class TaskExecutionService:
             return
         self.worktrees.remove(run_id, task_id)
 
-    def _apply_parallel_patch(
-        self,
-        strategy: ExecutionStrategy,
-        patch: Path,
-    ) -> list[str]:
-        if (
-            str(strategy) != ExecutionStrategy.PARALLEL
-            or not self.worktrees.is_available()
-            or not _patch_has_changes(patch)
-        ):
+    def _apply_parallel_patch(self, patch: Path) -> list[str]:
+        if not _patch_has_changes(patch):
             return []
         result = self.worktrees.apply(patch)
         if result.returncode == 0:
