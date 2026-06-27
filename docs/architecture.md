@@ -35,7 +35,7 @@ collect_goal
 
 ## Solo First
 
-`auto` 模式默认生成 `solo` 计划。当目标出现明确的先后依赖信号，例如 `先`、`再`、`schema`、`contract`、`OpenAPI`、`上游`、`下游`，Planner 会选择 `pipeline`。Pipeline 当前按任务依赖拓扑顺序串行执行，每个任务都会生成自己的 `tasks/<task-id>/task.yaml`、worker request/result 和 patch。契约文件写入 `contracts/`，并以 `ContractArtifact` 记录 path、kind、sha256 和 producer task；下游 task 消费契约时会记录该 hash，`resume` 会在契约变更后进入 `human_required`。显式 `parallel` 计划必须通过依赖图、验收覆盖、上游 Artifact、写路径冲突、冻结 contract 和策略理由检查；验证失败会直接进入 `human_required`，验证通过后会派发独立任务并在 `04_integration.yaml` 记录 merged tasks 与 conflicts 列表。
+`auto` 模式默认生成 `solo` 计划。当目标出现明确的先后依赖信号，例如 `先`、`再`、`schema`、`contract`、`OpenAPI`、`上游`、`下游`，Planner 会选择 `pipeline`。Pipeline 当前按任务依赖拓扑顺序串行执行，每个任务都会生成自己的 `tasks/<task-id>/task.yaml`、worker request/result 和 patch。契约文件写入 `contracts/`，并以 `ContractArtifact` 记录 path、kind、sha256 和 producer task；下游 task 消费契约时会记录该 hash，`resume` 会在契约变更后进入 `human_required`。显式 `parallel` 计划必须通过依赖图、验收覆盖、上游 Artifact、写路径冲突、冻结 contract 和策略理由检查；验证失败会直接进入 `human_required`。验证通过后默认仍需人工批准，批准写入 `03_execution_plan.yaml` 后 `resume` 从 `validate_execution_plan` 继续。真正执行时，ready tasks 在隔离 git worktree 并发运行，主仓库只在批次完成后串行应用 patch，并在 `04_integration.yaml` 记录 merged tasks 与 conflicts 列表。
 
 ## Backend Boundary
 

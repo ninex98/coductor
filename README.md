@@ -28,7 +28,7 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 - `codex exec` fallback 使用显式 sandbox 和 stdin prompt；Codex CLI 返回普通文本，固定 YAML Artifact 由 Coductor 本地写入；
 - `auto` 会在检测到明确先后依赖时生成顺序 pipeline，并按任务依赖顺序执行；
 - Contract Artifact 记录契约文件 hash，下游 task 消费契约时会被 stale 校验保护；
-- 显式 `parallel` 计划会先检查写路径冲突和 contract handoff，安全时执行独立任务并写 integration report；
+- 显式 `parallel` 计划会先检查写路径冲突和 contract handoff，默认要求人工审批；`approve` 后 `resume` 会按 `max_parallel_workers` 在隔离 git worktree 并发执行独立任务，再串行回放 patch 并写 integration report；
 - 质量门执行、失败指纹、有限修复循环；
 - 独立 Reviewer Worker 和 Evidence Bundle；Evidence 只有在必需 Gate 通过、无 blocking review、且存在 patch evidence 时才 ready；
 - SQLite run/event 索引。
@@ -123,7 +123,7 @@ data:
 
 ## Roadmap
 
-- 已完成：artifact lineage、resume stale 检测、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、CLI 控制面、evidence hardening、demo E2E。
+- 已完成：artifact lineage、resume stale 检测、codex exec fallback、动态 pipeline、contract stale 检测、安全 parallel 预检、parallel 审批恢复、worktree 并发执行、CLI 控制面真实 verify/review、evidence hardening、demo E2E。
 - 后续：Web 控制台、通知审批、PR 创建、成本/Token 指标、更多 Backend、LangGraph 原生 checkpoint 生命周期清理。
 
 危险能力默认关闭：不推送远程分支，不创建 PR，不读取生产秘密，不自动合并。
