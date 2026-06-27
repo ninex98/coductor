@@ -298,10 +298,11 @@ def _render_status_once(
 
 def show_run(run_id: str) -> None:
     root = _root(".")
-    row = _db(root).get_run(run_id)
-    if row is None:
-        _print(f"未找到 Run: {run_id}")
-        return
+    service = _report_service(root)
+    try:
+        row = service.run_context(run_id, "show")
+    except RunReportError as error:
+        _exit_with_report_error(service, error)
     run_dir = Path(row["run_dir"])
     files = sorted(path.relative_to(run_dir).as_posix() for path in run_dir.rglob("*.yaml"))
     _print(dump_yaml({"run": row, "artifacts": files}))
@@ -320,10 +321,11 @@ def resume_run(run_id: str) -> None:
 
 def report_run(run_id: str) -> None:
     root = _root(".")
-    row = _db(root).get_run(run_id)
-    if row is None:
-        _print(f"未找到 Run: {run_id}")
-        return
+    service = _report_service(root)
+    try:
+        row = service.run_context(run_id, "report")
+    except RunReportError as error:
+        _exit_with_report_error(service, error)
     report = Path(row["run_dir"]) / "delivery-report.md"
     if not report.exists():
         _print(f"报告不存在: {report}")

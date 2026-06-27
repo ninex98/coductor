@@ -297,6 +297,49 @@ def test_cli_artifacts_rejects_run_dir_outside_project_runs(
     assert "outside project runs directory" in result.output
 
 
+def test_cli_show_rejects_run_dir_outside_project_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    (outside / "secret.yaml").write_text("token: hidden\n", encoding="utf-8")
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.upsert_run("run_abc", "running", outside.as_posix(), "2026-06-24T00:00:00Z")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["show", "run_abc"])
+
+    assert result.exit_code == 1
+    assert "outside project runs directory" in result.output
+    assert "secret.yaml" not in result.output
+
+
+def test_cli_report_rejects_run_dir_outside_project_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    (outside / "delivery-report.md").write_text("external report\n", encoding="utf-8")
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.upsert_run(
+        "run_abc",
+        "ready_for_human_review",
+        outside.as_posix(),
+        "2026-06-24T00:00:00Z",
+    )
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["report", "run_abc"])
+
+    assert result.exit_code == 1
+    assert "outside project runs directory" in result.output
+    assert "external report" not in result.output
+
+
 def test_cli_logs_lists_run_events(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
