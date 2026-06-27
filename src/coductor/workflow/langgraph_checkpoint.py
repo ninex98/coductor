@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -47,28 +49,36 @@ class LangGraphCheckpointStore:
         self.database_path = database_path
 
     def save(self, state: WorkflowState) -> None:
-        graph, connection = self._compile_graph()
-        if graph is None:
-            return
-        try:
+        with self.open_graph() as graph:
+            if graph is None:
+                return
             graph.update_state(
                 langgraph_thread_config(state.run_id),
                 state.model_dump(mode="json"),
             )
-        finally:
-            connection.close()
 
     def load(self, run_id: str) -> WorkflowState | None:
-        graph, connection = self._compile_graph()
-        if graph is None:
-            return None
-        try:
+        with self.open_graph() as graph:
+            if graph is None:
+                return None
             snapshot = graph.get_state(langgraph_thread_config(run_id))
-        finally:
-            connection.close()
         if not snapshot.values:
             return None
         return WorkflowState.model_validate(snapshot.values)
+
+    @contextmanager
+    def open_graph(self) -> Iterator[Any | None]:
+        connection = sqlite3.connect(self.database_path)
+        try:
+            saver = create_langgraph_sqlite_saver(connection)
+        except LangGraphSqliteCheckpointUnavailable:
+            connection.close()
+            yield None
+            return
+        try:
+            yield compile_workflow_graph(checkpointer=saver)
+        finally:
+            connection.close()
 
     def checkpointer(self) -> Any | None:
         connection = sqlite3.connect(self.database_path)
@@ -80,12 +90,3 @@ class LangGraphCheckpointStore:
 
     def compile_graph(self) -> Any:
         return compile_workflow_graph(checkpointer=self.checkpointer())
-
-    def _compile_graph(self) -> tuple[Any | None, sqlite3.Connection]:
-        connection = sqlite3.connect(self.database_path)
-        try:
-            saver = create_langgraph_sqlite_saver(connection)
-        except LangGraphSqliteCheckpointUnavailable:
-            connection.close()
-            return None, connection
-        return compile_workflow_graph(checkpointer=saver), connection

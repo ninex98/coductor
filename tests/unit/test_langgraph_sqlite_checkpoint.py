@@ -100,3 +100,56 @@ def test_langgraph_checkpoint_store_allows_missing_dependency(tmp_path, monkeypa
     store.save(state)
 
     assert store.load(state.run_id) is None
+
+
+def test_langgraph_checkpoint_store_open_graph_closes_connection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = LangGraphCheckpointStore(tmp_path / "coductor.sqlite3")
+    closed: list[bool] = []
+    compiled: list[object | None] = []
+
+    class FakeConnection:
+        def close(self) -> None:
+            closed.append(True)
+
+    class FakeSaver:
+        def __init__(self, connection: FakeConnection) -> None:
+            self.connection = connection
+
+    class FakeGraph:
+        pass
+
+    connection = FakeConnection()
+    graph = FakeGraph()
+
+    def fake_connect(path):
+        assert path == tmp_path / "coductor.sqlite3"
+        return connection
+
+    def fake_saver(received: FakeConnection) -> FakeSaver:
+        assert received is connection
+        return FakeSaver(received)
+
+    def fake_compile_workflow_graph(*, checkpointer=None):
+        compiled.append(checkpointer)
+        return graph
+
+    monkeypatch.setattr("coductor.workflow.langgraph_checkpoint.sqlite3.connect", fake_connect)
+    monkeypatch.setattr(
+        "coductor.workflow.langgraph_checkpoint.create_langgraph_sqlite_saver",
+        fake_saver,
+    )
+    monkeypatch.setattr(
+        "coductor.workflow.langgraph_checkpoint.compile_workflow_graph",
+        fake_compile_workflow_graph,
+    )
+
+    with store.open_graph() as opened:
+        assert opened is graph
+        assert closed == []
+
+    assert len(compiled) == 1
+    assert isinstance(compiled[0], FakeSaver)
+    assert closed == [True]

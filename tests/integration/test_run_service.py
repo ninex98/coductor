@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
@@ -219,6 +220,29 @@ def test_run_service_compile_langgraph_allows_missing_checkpointer(
     assert received == [None]
 
 
+def test_run_service_open_langgraph_closes_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = RunService(tmp_path, CoductorConfig.default(), backend=FakeCodingBackend())
+    closed: list[bool] = []
+
+    @contextmanager
+    def fake_open_graph():
+        try:
+            yield "compiled"
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(service.langgraph_checkpoints, "open_graph", fake_open_graph)
+
+    with service.open_langgraph() as graph:
+        assert graph == "compiled"
+        assert closed == []
+
+    assert closed == [True]
+
+
 def test_run_service_save_checkpoint_updates_langgraph_sqlite_state(
     tmp_path: Path,
 ) -> None:
@@ -235,7 +259,9 @@ def test_run_service_save_checkpoint_updates_langgraph_sqlite_state(
         )
     )
 
-    snapshot = service.compile_langgraph().get_state(langgraph_thread_config(run_id))
+    with service.open_langgraph() as graph:
+        assert graph is not None
+        snapshot = graph.get_state(langgraph_thread_config(run_id))
 
     assert snapshot.values["run_id"] == run_id
     assert snapshot.values["current_stage"] == "draft_spec"

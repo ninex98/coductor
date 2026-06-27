@@ -31,7 +31,7 @@ collect_goal
   -> prepare_evidence
 ```
 
-当前由 `RunService` 构建 contextual LangGraph 发起这个垂直切片，并通过 SQLite workflow checkpoint 支持 `resume`。各阶段节点只做编排适配：读取上游 YAML Artifact、调用 artifact writer、task execution、verification、repair、review delivery 等服务、记录固定 Artifact 路径并保存 checkpoint。`workflow/graph.py` 负责节点注册、条件路由、按 checkpoint stage 进入图，以及 `compile_workflow_graph` 的 checkpointer 接入；`langgraph-checkpoint-sqlite` 已作为目标依赖声明。
+当前由 `RunService` 构建 contextual LangGraph 发起这个垂直切片，并通过 SQLite workflow checkpoint 支持 `resume`。各阶段节点只做编排适配：读取上游 YAML Artifact、调用 artifact writer、task execution、verification、repair、review delivery 等服务、记录固定 Artifact 路径并保存 checkpoint。`workflow/graph.py` 负责节点注册、条件路由、按 checkpoint stage 进入图，以及 `compile_workflow_graph` 的 checkpointer 接入；`langgraph-checkpoint-sqlite` 已作为目标依赖声明。直接访问 LangGraph graph 的代码应通过 `open_graph()` / `open_langgraph()` 的 context manager 管理 SQLite 连接。
 
 ## Solo First
 

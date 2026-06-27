@@ -76,17 +76,19 @@ def test_resume_loads_state_from_langgraph_sqlite_checkpoint(tmp_path: Path) -> 
     run_id = "run_langgraph_resume_000000000000001"
     run_dir = tmp_path / ".coductor" / "runs" / run_id
     run_dir.mkdir(parents=True)
-    service.compile_langgraph().update_state(
-        langgraph_thread_config(run_id),
-        WorkflowState(
-            run_id=run_id,
-            status=RunStatus.RUNNING,
-            current_stage="run_quality_gates",
-            repair_attempts=0,
-            raw_goal="从 LangGraph checkpoint 恢复",
-            requested_mode="auto",
-        ).model_dump(mode="json"),
-    )
+    with service.open_langgraph() as graph:
+        assert graph is not None
+        graph.update_state(
+            langgraph_thread_config(run_id),
+            WorkflowState(
+                run_id=run_id,
+                status=RunStatus.RUNNING,
+                current_stage="run_quality_gates",
+                repair_attempts=0,
+                raw_goal="从 LangGraph checkpoint 恢复",
+                requested_mode="auto",
+            ).model_dump(mode="json"),
+        )
 
     result = service.resume(run_id)
 

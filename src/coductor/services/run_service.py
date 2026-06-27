@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
@@ -204,6 +205,9 @@ class RunService:
 
     def compile_langgraph(self) -> Any:
         return self.langgraph_checkpoints.compile_graph()
+
+    def open_langgraph(self) -> AbstractContextManager[Any | None]:
+        return self.langgraph_checkpoints.open_graph()
 
     def resume(self, run_id: str) -> RunResult:
         state = self._load_resume_state(run_id)
