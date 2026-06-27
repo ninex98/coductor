@@ -128,6 +128,53 @@ def test_web_action_release_writes_manifest(tmp_path: Path, monkeypatch) -> None
     assert (run_dir / "08_release_manifest.yaml").exists()
 
 
+def test_web_action_rejects_duplicate_action_within_short_window(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_ready_release_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+
+    first = app.handle("POST", "/api/runs/run_abc/actions/release", headers=_action_headers())
+    second = app.handle("POST", "/api/runs/run_abc/actions/release", headers=_action_headers())
+
+    assert first.status == 200
+    assert second.status == 429
+    assert "too many" in second.body["error"]["message"].lower()
+
+
+def test_web_action_rate_limit_is_scoped_to_action(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_basic_run(tmp_path, status="running")
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+
+    first = app.handle("POST", "/api/runs/run_abc/actions/pause", headers=_action_headers())
+    second = app.handle("POST", "/api/runs/run_abc/actions/stop", headers=_action_headers())
+
+    assert first.status == 200
+    assert second.status != 429
+
+
+def test_web_action_allows_repeat_after_rate_limit_window(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed_ready_release_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+    app.control_service.DEFAULT_ACTION_WINDOW_SECONDS = -1
+
+    first = app.handle("POST", "/api/runs/run_abc/actions/release", headers=_action_headers())
+    second = app.handle("POST", "/api/runs/run_abc/actions/release", headers=_action_headers())
+
+    assert first.status == 200
+    assert second.status == 200
+
+
 def test_web_action_rejects_locked_run_without_side_effects(tmp_path: Path, monkeypatch) -> None:
     run_dir = _seed_basic_run(tmp_path, status="running")
     db = Database(tmp_path / ".coductor" / "coductor.sqlite3")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from coductor.artifacts.repository import ArtifactRepository
@@ -35,12 +36,16 @@ class ConsoleControlError(RuntimeError):
 
 
 class ConsoleControlService:
+    DEFAULT_ACTION_WINDOW_SECONDS = 2.0
+
     def __init__(self, root: Path) -> None:
         self.root = root
         self.db = Database(root / CODUCTOR_DIR / "coductor.sqlite3")
         self.report = ReportService(self.db, root=root)
+        self._recent_actions: dict[tuple[str, str], float] = {}
 
     def run_action(self, run_id: str, action: str) -> ConsoleActionResult:
+        self._check_action_window(run_id, action)
         if action == "resume":
             return self._resume(run_id)
         if action == "release":
@@ -51,6 +56,21 @@ class ConsoleControlService:
             f"unsupported action: {action}",
             next_command=f"coductor status {run_id}",
         )
+
+    def _check_action_window(self, run_id: str, action: str) -> None:
+        now = time.monotonic()
+        key = (run_id, action)
+        last_seen = self._recent_actions.get(key)
+        if (
+            last_seen is not None
+            and now - last_seen < self.DEFAULT_ACTION_WINDOW_SECONDS
+        ):
+            raise ConsoleControlError(
+                f"too many repeated {action} requests for {run_id}",
+                status_code=429,
+                next_command=f"coductor status {run_id}",
+            )
+        self._recent_actions[key] = now
 
     def _control(self, run_id: str, action: str) -> ConsoleActionResult:
         self._run_context(run_id, action)
