@@ -514,6 +514,41 @@ def test_resume_returns_human_required_when_run_lock_is_held(tmp_path: Path) -> 
     service.db.release_run_lock(run_id, "test-owner")
 
 
+def test_resume_rejects_run_table_dir_outside_project_runs(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    config.quality_gates = []
+    service = RunService(tmp_path, config, backend=FakeCodingBackend())
+    run_id = "run_outside_dir_resume_000000000001"
+    run_dir = tmp_path / ".coductor" / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    service.save_checkpoint(
+        WorkflowState(
+            run_id=run_id,
+            status=RunStatus.RUNNING,
+            current_stage="inspect_repository",
+            raw_goal="从不一致的 run_dir 恢复",
+            requested_mode="auto",
+            run_dir=run_dir.as_posix(),
+        )
+    )
+    outside_run_dir = tmp_path / "outside-run-dir"
+    outside_run_dir.mkdir()
+    service.db.upsert_run(
+        run_id,
+        "running",
+        outside_run_dir.as_posix(),
+        "2026-06-24T00:00:02Z",
+    )
+
+    result = service.resume(run_id)
+
+    assert result.status == RunStatus.HUMAN_REQUIRED
+    assert "outside project runs directory" in result.message
+    assert not (run_dir / "07_evidence.yaml").exists()
+    assert service.db.get_run_lock(run_id) is None
+
+
 def test_resume_takes_over_stale_run_lock(tmp_path: Path) -> None:
     config = CoductorConfig.default()
     config.backend.provider = "fake"

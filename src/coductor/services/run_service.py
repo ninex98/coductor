@@ -292,6 +292,17 @@ class RunService:
             )
         run_dir = self.runs_dir / run_id
         control_status = self.db.get_run(run_id)
+        if control_status is not None and self._run_dir_mismatch(control_status, run_dir):
+            return RunResult(
+                run_id=run_id,
+                status=RunStatus.HUMAN_REQUIRED,
+                run_dir=run_dir.as_posix(),
+                repair_attempts=state.repair_attempts,
+                message=(
+                    "run_dir is outside project runs directory: "
+                    f"{control_status['run_dir']}"
+                ),
+            )
         if control_status is not None and control_status["status"] in {"paused", "stopped"}:
             status = RunStatus(control_status["status"])
             return RunResult(
@@ -328,6 +339,9 @@ class RunService:
             repo=repo,
             run_dir=run_dir,
         )
+
+    def _run_dir_mismatch(self, row: dict[str, str], expected_run_dir: Path) -> bool:
+        return Path(row["run_dir"]).resolve() != expected_run_dir.resolve()
 
     def _lock_owner(self, operation: str) -> str:
         return f"{operation}:{os.getpid()}"
