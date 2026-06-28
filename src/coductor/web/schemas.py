@@ -39,6 +39,8 @@ class ConsoleRunSummary(BaseModel):
     updated_at: str
     current_stage: str | None = None
     last_error: str | None = None
+    run_dir_valid: bool = True
+    run_dir_error: str | None = None
 
 
 class ConsoleCheckpointSummary(BaseModel):

@@ -142,6 +142,7 @@ class ConsoleReadService:
 
     def _run_summary(self, row: dict[str, str]) -> ConsoleRunSummary:
         checkpoint = self._checkpoint(row["run_id"])
+        run_dir_error = self._run_dir_boundary_error(row)
         return ConsoleRunSummary(
             run_id=row["run_id"],
             status=row["status"],
@@ -149,6 +150,8 @@ class ConsoleReadService:
             updated_at=row["updated_at"],
             current_stage=checkpoint.current_stage if checkpoint else None,
             last_error=checkpoint.last_error if checkpoint else None,
+            run_dir_valid=run_dir_error is None,
+            run_dir_error=run_dir_error,
         )
 
     def _checkpoint(self, run_id: str) -> ConsoleCheckpointSummary | None:
@@ -174,16 +177,20 @@ class ConsoleReadService:
 
     def _run_dir(self, run_id: str) -> Path:
         row = self._run_row(run_id)
+        error = self._run_dir_boundary_error(row)
+        if error is not None:
+            raise ConsoleReadError(error, next_command=f"coductor status {run_id}")
+        return Path(row["run_dir"]).resolve()
+
+    def _run_dir_boundary_error(self, row: dict[str, str]) -> str | None:
+        run_id = row["run_id"]
         run_dir = Path(row["run_dir"])
         expected_root = (self.root / CODUCTOR_DIR / "runs").resolve()
         resolved = run_dir.resolve()
         expected = (expected_root / run_id).resolve()
         if resolved != expected:
-            raise ConsoleReadError(
-                f"run_dir is outside project runs directory: {run_dir}",
-                next_command=f"coductor status {run_id}",
-            )
-        return resolved
+            return f"run_dir is outside project runs directory: {run_dir}"
+        return None
 
     def _safe_file(self, run_dir: Path, path: str) -> Path:
         try:

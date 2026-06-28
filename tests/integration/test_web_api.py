@@ -81,6 +81,22 @@ def test_local_console_api_health_and_runs(tmp_path: Path) -> None:
     assert run.body["data"]["artifacts"][0]["path"] == "00_goal.yaml"
 
 
+def test_local_console_run_list_flags_run_dir_outside_project_runs(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.upsert_run("run_abc", "running", outside.as_posix(), "2026-06-24T00:00:00Z")
+    app = create_app(tmp_path)
+
+    response = app.handle("GET", "/api/runs")
+
+    assert response.status == 200
+    run = response.body["data"][0]
+    assert run["run_id"] == "run_abc"
+    assert run["run_dir_valid"] is False
+    assert "outside project runs directory" in run["run_dir_error"]
+
+
 def test_local_console_run_detail_includes_evidence_and_release_summary(
     tmp_path: Path,
 ) -> None:
