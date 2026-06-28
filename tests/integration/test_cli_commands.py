@@ -197,6 +197,26 @@ def test_cli_status_json_includes_checkpoint_state(
     ]
 
 
+def test_cli_status_json_flags_run_dir_outside_project_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    db.upsert_run("run_abc", "running", outside.as_posix(), "2026-06-24T00:00:00Z")
+    monkeypatch.chdir(tmp_path)
+    cli_runner = CliRunner()
+
+    result = cli_runner.invoke(app, ["status", "run_abc", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["run"]["run_id"] == "run_abc"
+    assert payload["run_dir_valid"] is False
+    assert "outside project runs directory" in payload["run_dir_error"]
+
+
 def test_cli_status_watch_renders_repeated_status(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

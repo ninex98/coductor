@@ -272,8 +272,14 @@ def _render_status_once(
     if row is None:
         _print("未找到运行记录。")
         return
+    run_dir_error = _run_dir_boundary_error(root, row)
     if json_output:
-        payload: dict[str, Any] = {"run": row, "checkpoint": None}
+        payload: dict[str, Any] = {
+            "run": row,
+            "checkpoint": None,
+            "run_dir_valid": run_dir_error is None,
+            "run_dir_error": run_dir_error,
+        }
         checkpoint = db.get_checkpoint(row["run_id"])
         if checkpoint is not None:
             payload["checkpoint"] = {
@@ -289,11 +295,37 @@ def _render_status_once(
         table.add_column("Run ID")
         table.add_column("Status")
         table.add_column("Run Dir")
+        table.add_column("Run Dir Valid")
         table.add_column("Updated")
-        table.add_row(row["run_id"], row["status"], row["run_dir"], row["updated_at"])
+        table.add_row(
+            row["run_id"],
+            row["status"],
+            row["run_dir"],
+            "yes" if run_dir_error is None else "no",
+            row["updated_at"],
+        )
         console.print(table)
     else:
-        _print(json.dumps(row, ensure_ascii=False, indent=2))
+        _print(
+            json.dumps(
+                {
+                    **row,
+                    "run_dir_valid": run_dir_error is None,
+                    "run_dir_error": run_dir_error,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+
+
+def _run_dir_boundary_error(root: Path, row: dict[str, str]) -> str | None:
+    run_id = row["run_id"]
+    run_dir = Path(row["run_dir"])
+    expected = (root / CODUCTOR_DIR / "runs" / run_id).resolve()
+    if run_dir.resolve() != expected:
+        return f"run_dir is outside project runs directory: {run_dir}"
+    return None
 
 
 def show_run(run_id: str) -> None:
