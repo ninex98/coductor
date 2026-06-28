@@ -50,6 +50,26 @@ def test_gate_runner_redacts_sensitive_output_logs(tmp_path: Path) -> None:
     assert "Authorization: Bearer [REDACTED]" in stderr
 
 
+def test_gate_runner_redacts_sensitive_command_in_report(tmp_path: Path) -> None:
+    gate = QualityGate(
+        id="secret_command",
+        stage="final",
+        command=(
+            f"{sys.executable} -c 'import sys; sys.exit(1)' "
+            "OPENAI_API_KEY=sk-command-secret"
+        ),
+        required=True,
+        timeout_seconds=30,
+    )
+
+    report = GateRunner(tmp_path).run([gate])
+
+    command = report.gates[0].command
+    assert "sk-command-secret" not in command
+    assert "OPENAI_API_KEY=[REDACTED]" in command
+    assert report.gates[0].failure_fingerprint.startswith("sha256:")
+
+
 def test_gate_runner_marks_all_required_passed(tmp_path: Path) -> None:
     gate = QualityGate(
         id="unit_tests",

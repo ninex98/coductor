@@ -73,17 +73,18 @@ class GateRunner:
             status = "failed"
         stdout = redact_sensitive_text(stdout)
         stderr = redact_sensitive_text(stderr)
+        command = redact_sensitive_text(gate.command)
         duration_ms = int((time.monotonic() - start) * 1000)
         (self.run_dir / stdout_path).write_text(stdout, encoding="utf-8")
         (self.run_dir / stderr_path).write_text(stderr, encoding="utf-8")
         fingerprint = None
         if status != "passed":
-            fingerprint = failure_fingerprint(gate.command, exit_code, stdout, stderr)
+            fingerprint = failure_fingerprint(command, exit_code, stdout, stderr)
         return GateResultData(
             id=gate.id,
             required=gate.required,
             status=status,
-            command=gate.command,
+            command=command,
             exit_code=exit_code,
             duration_ms=duration_ms,
             stdout_path=stdout_path,
