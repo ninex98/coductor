@@ -1,0 +1,117 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, PingFang SC, Microsoft YaHei, Arial, sans-serif","primaryColor":"#F8FAFC","primaryTextColor":"#172033","primaryBorderColor":"#CBD5E1","lineColor":"#64748B","secondaryColor":"#F1F5F9","tertiaryColor":"#FFFFFF","clusterBkg":"#FBFDFF","clusterBorder":"#D8E0EA","edgeLabelBackground":"#FFFFFF"},"flowchart":{"htmlLabels":true,"curve":"basis","nodeSpacing":44,"rankSpacing":66,"padding":18}}}%%
+%% Coductor Diagram 2: End-to-End Runtime Flow
+flowchart LR
+  title["<b>图 2 / 端到端业务流程</b><br/><span>从用户 Goal 到 Evidence Bundle 的主线与可恢复分支</span>"]
+
+  subgraph legend["图例"]
+    direction TB
+    leMain["绿色：LangGraph 主线"]
+    lePause["黄色：人工确认 / 可恢复停顿"]
+    leRepair["红色：验证失败与修复闭环"]
+    leDeliver["紫色：审查与交付"]
+  end
+
+  subgraph setup["启动与初始化"]
+    direction TB
+    start(["用户输入 Goal<br/>coductor run"])
+    config["读取 coductor.yaml<br/>覆盖 mode / backend"]
+    create["创建 run_id<br/>初始化 WorkflowState"]
+  end
+
+  subgraph mainFlow["LangGraph 主流程"]
+    direction LR
+    goal["1 Goal<br/>00_goal.yaml"]
+    inspect["2 Inspect<br/>01_repository_snapshot.yaml"]
+    spec["3 Spec<br/>02_spec.yaml"]
+    plan["4 Plan<br/>03_execution_plan.yaml"]
+    materialize["5 Materialize<br/>tasks/T###"]
+    dispatch["6 Execute<br/>worker_result / patch"]
+    integrate["7 Integrate<br/>04_integration.yaml"]
+    gates["8 Verify<br/>05_gate_report.yaml"]
+    review["9 Review<br/>06_review.yaml"]
+    deliver["10 Deliver<br/>07_evidence.yaml"]
+    ready(["ready_for_human_review"])
+  end
+
+  subgraph decisions["关键分支"]
+    direction TB
+    needSpec{"Spec 需要审批?"}
+    planValid{"Plan 可执行?"}
+    workerOk{"Worker 成功?"}
+    gateOk{"必需 Gate 通过?"}
+    reviewBlock{"Review blocking?"}
+    evidenceOk{"Evidence valid?"}
+  end
+
+  subgraph pauseResume["暂停、审批与恢复"]
+    direction TB
+    human(["human_required<br/>审批 / 提问 / 介入"])
+    approve["coductor approve"]
+    resume["coductor resume<br/>从 checkpoint 继续"]
+    control["pause / stop / status / explain"]
+  end
+
+  subgraph repairLoop["质量修复闭环"]
+    direction TB
+    repairLimit{"修复次数 &lt; max?"}
+    repair["RepairService<br/>repairs/R###/*"]
+    noRepair["进入 Evidence<br/>记录未通过原因"]
+  end
+
+  subgraph afterDelivery["交付后动作"]
+    direction TB
+    report["coductor report<br/>delivery-report.md"]
+    release["coductor release<br/>08_release_manifest.yaml"]
+    rerun["coductor verify / review<br/>按需重跑质量环节"]
+  end
+
+  title -.-> start
+  start --> config --> create --> goal
+  goal --> inspect --> spec --> needSpec
+  needSpec -->|"否"| plan
+  needSpec -->|"是"| human
+  plan --> planValid
+  planValid -->|"是"| materialize
+  planValid -->|"否 / parallel 未审批"| human
+  materialize --> dispatch --> workerOk
+  workerOk -->|"是"| integrate
+  workerOk -->|"否"| human
+  integrate --> gates --> gateOk
+  gateOk -->|"是"| review
+  gateOk -->|"否"| repairLimit
+  repairLimit -->|"是"| repair --> gates
+  repairLimit -->|"否"| noRepair --> deliver
+  review --> reviewBlock
+  reviewBlock -->|"可配置触发修复"| repair
+  reviewBlock -->|"否 / 默认继续"| deliver
+  deliver --> evidenceOk
+  evidenceOk -->|"是"| ready
+  evidenceOk -->|"否"| human
+
+  human --> approve --> resume
+  resume --> plan
+  control -.-> human
+  control -.-> ready
+
+  ready --> report
+  ready --> release
+  rerun -.-> gates
+  rerun -.-> review
+
+  classDef title fill:#FFFFFF,stroke:#FFFFFF,color:#111827,font-size:20px
+  classDef setup fill:#EAF3FF,stroke:#2F6DB3,color:#13263A,stroke-width:1px
+  classDef main fill:#EAF7F1,stroke:#2E8B57,color:#153225,stroke-width:1px
+  classDef decision fill:#FFFFFF,stroke:#64748B,color:#172033,stroke-width:1px
+  classDef pause fill:#FFF7D6,stroke:#B7791F,color:#3A2508,stroke-width:1px
+  classDef repair fill:#FEEEEE,stroke:#C25A5A,color:#3B1616,stroke-width:1px
+  classDef deliver fill:#F5F3FF,stroke:#7C3AED,color:#241044,stroke-width:1px
+  classDef legend fill:#FFFFFF,stroke:#CBD5E1,color:#334155
+
+  class title title
+  class start,config,create setup
+  class goal,inspect,spec,plan,materialize,dispatch,integrate,gates,review,deliver,ready main
+  class needSpec,planValid,workerOk,gateOk,reviewBlock,evidenceOk decision
+  class human,approve,resume,control pause
+  class repairLimit,repair,noRepair repair
+  class report,release,rerun deliver
+  class leMain,lePause,leRepair,leDeliver legend

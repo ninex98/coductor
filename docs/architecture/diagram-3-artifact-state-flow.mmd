@@ -1,0 +1,119 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, PingFang SC, Microsoft YaHei, Arial, sans-serif","primaryColor":"#F8FAFC","primaryTextColor":"#172033","primaryBorderColor":"#CBD5E1","lineColor":"#64748B","secondaryColor":"#F1F5F9","tertiaryColor":"#FFFFFF","clusterBkg":"#FBFDFF","clusterBorder":"#D8E0EA","edgeLabelBackground":"#FFFFFF"},"flowchart":{"htmlLabels":true,"curve":"basis","nodeSpacing":46,"rankSpacing":70,"padding":18}}}%%
+%% Coductor Diagram 3: YAML Artifact And Run State Flow
+flowchart LR
+  title["<b>图 3 / YAML Artifact 与状态流转</b><br/><span>固定结构文件驱动下游阶段，状态与恢复由 SQLite 记录</span>"]
+
+  subgraph legend["图例"]
+    direction TB
+    lgSolid["实线：Artifact 下游输入"]
+    lgDashed["虚线：状态 / 控制动作"]
+    lgYaml["紫色：YAML Artifact"]
+    lgOther["灰色：非 YAML 证据文件"]
+  end
+
+  subgraph states["Run 状态机"]
+    direction TB
+    created(("created"))
+    running(("running"))
+    human(("human_required<br/>人工确认 / 介入"))
+    ready(("ready_for_human_review"))
+    paused(("paused"))
+    stopped(("stopped"))
+    failed(("failed"))
+    controlState["控制状态字符串<br/>approved / verification_requested / review_requested"]
+  end
+
+  subgraph chain["固定 Artifact 链"]
+    direction LR
+    a00["00_goal.yaml<br/>goal"]
+    a01["01_repository_snapshot.yaml<br/>repository_snapshot"]
+    a02["02_spec.yaml<br/>specification"]
+    a03["03_execution_plan.yaml<br/>execution_plan"]
+    taskYaml["tasks/T###/task.yaml<br/>task"]
+    reqYaml["worker_request.yaml"]
+    resultYaml["worker_result.yaml"]
+    a04["04_integration.yaml<br/>integration"]
+    a05["05_gate_report.yaml<br/>gate_report"]
+    a06["06_review.yaml<br/>review_report"]
+    a07["07_evidence.yaml<br/>evidence_bundle"]
+    a08["08_release_manifest.yaml<br/>release_manifest"]
+  end
+
+  subgraph sideArtifacts["执行与修复证据"]
+    direction TB
+    patchDiff["patch.diff<br/>非 YAML"]
+    repairReq["repairs/R###/repair_request.yaml"]
+    repairResult["repairs/R###/repair_result.yaml"]
+    repairPatch["repair_result.patch<br/>非 YAML"]
+    reportMd["delivery-report.md<br/>人类阅读报告"]
+  end
+
+  subgraph integrity["确定性保障"]
+    direction LR
+    runDir[[".coductor/runs/&lt;run-id&gt;"]]
+    hash["content_sha256<br/>读取时重算"]
+    revisions["revision + history"]
+    inputs["inputs[]<br/>path / revision / sha256"]
+    contracts["contracts/contracts.yml<br/>ContractArtifact sha256"]
+    stale["stale_artifacts<br/>hash / revision / contract mismatch"]
+  end
+
+  subgraph storage["SQLite 持久化"]
+    direction TB
+    checkpoint[("workflow_checkpoints<br/>WorkflowState JSON")]
+    events[("events<br/>stage timeline")]
+    locks[("run_locks<br/>resume / control 互斥")]
+  end
+
+  title -.-> chain
+
+  created -.->|"coductor run"| running
+  running -.->|"审批 / worker 失败 / stale / evidence invalid"| human
+  human -.->|"approve + resume"| running
+  running -.->|"Evidence valid"| ready
+  running -.->|"pause"| paused
+  running -.->|"stop"| stopped
+  running -.->|"unhandled error"| failed
+  human -.->|"verify / review request"| controlState
+  ready -.->|"verify / review request"| controlState
+  controlState -.->|"rerun gates or review"| running
+
+  a00 --> a01 --> a02 --> a03 --> taskYaml --> reqYaml --> resultYaml --> a04 --> a05 --> a06 --> a07 --> a08
+  resultYaml --> patchDiff --> a07
+  a05 --> repairReq --> repairResult --> a05
+  repairResult --> repairPatch
+  a07 --> reportMd
+  a03 --> contracts --> taskYaml
+
+  chain -.-> runDir
+  sideArtifacts -.-> runDir
+  runDir --> hash
+  runDir --> revisions
+  runDir --> inputs
+  inputs --> stale
+  contracts --> stale
+  stale -.-> human
+
+  running -.-> checkpoint
+  running -.-> events
+  human -.-> checkpoint
+  ready -.-> events
+  controlState -.-> locks
+
+  classDef title fill:#FFFFFF,stroke:#FFFFFF,color:#111827,font-size:20px
+  classDef state fill:#FFF7D6,stroke:#B7791F,color:#3A2508,stroke-width:1px
+  classDef terminal fill:#EAF7F1,stroke:#2E8B57,color:#153225,stroke-width:1px
+  classDef artifact fill:#F5F3FF,stroke:#7C3AED,color:#241044,stroke-width:1px
+  classDef other fill:#F8FAFC,stroke:#94A3B8,color:#334155,stroke-width:1px
+  classDef integrity fill:#EAF3FF,stroke:#2F6DB3,color:#13263A,stroke-width:1px
+  classDef storage fill:#ECFEFF,stroke:#0891B2,color:#12343B,stroke-width:1px
+  classDef legend fill:#FFFFFF,stroke:#CBD5E1,color:#334155
+
+  class title title
+  class created,running,human,paused,stopped,failed,controlState state
+  class ready terminal
+  class a00,a01,a02,a03,taskYaml,reqYaml,resultYaml,a04,a05,a06,a07,a08,repairReq,repairResult artifact
+  class patchDiff,repairPatch,reportMd other
+  class runDir,hash,revisions,inputs,contracts,stale integrity
+  class checkpoint,events,locks storage
+  class lgSolid,lgDashed,lgYaml,lgOther legend

@@ -1,0 +1,155 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, PingFang SC, Microsoft YaHei, Arial, sans-serif","primaryColor":"#F8FAFC","primaryTextColor":"#172033","primaryBorderColor":"#CBD5E1","lineColor":"#64748B","secondaryColor":"#F1F5F9","tertiaryColor":"#FFFFFF","clusterBkg":"#FBFDFF","clusterBorder":"#D8E0EA","edgeLabelBackground":"#FFFFFF"},"flowchart":{"htmlLabels":true,"curve":"basis","nodeSpacing":48,"rankSpacing":72,"padding":18}}}%%
+%% Coductor Overview Main Diagram
+flowchart LR
+  title["<b>Coductor 总览主图</b><br/><span>确定性 AI Coding 工作流引擎：从 Goal 到可审查交付</span>"]
+
+  subgraph legend["图例"]
+    direction TB
+    lgDone["实线：当前代码已实现"]
+    lgPlan["虚线：规划 / 占位能力"]
+    lgYaml["YAML Artifact：阶段事实来源"]
+    lgDb["SQLite：Run 状态与事件索引"]
+  end
+
+  subgraph entry["用户入口"]
+    direction TB
+    user["用户 / Operator"]
+    cli["CLI<br/>run / resume / status"]
+    webui["Local Web Console<br/>serve / approve / control"]
+  end
+
+  subgraph control["控制平面与编排层"]
+    direction TB
+    runSvc["RunService<br/>创建 Run / 恢复 / 进度事件"]
+    lgOrch["Contextual LangGraph<br/>固定节点编排"]
+    wfState["WorkflowState<br/>stage / status / artifacts"]
+    ckpt["Checkpoint<br/>SQLite checkpoint / 可恢复状态"]
+  end
+
+  subgraph mainline["核心主线：Goal To Deliver"]
+    direction LR
+    goal["1 Goal<br/>00_goal.yaml"]
+    inspect["2 Inspect<br/>01_repository_snapshot.yaml"]
+    spec["3 Spec<br/>02_spec.yaml"]
+    plan["4 Plan<br/>03_execution_plan.yaml"]
+    execute["5 Execute<br/>tasks/T###/*"]
+    integrate["6 Integrate<br/>04_integration.yaml"]
+    verify["7 Verify<br/>05_gate_report.yaml"]
+    review["8 Review<br/>06_review.yaml"]
+    deliver["9 Deliver<br/>07_evidence.yaml"]
+  end
+
+  subgraph execution["执行层"]
+    direction TB
+    backend["Backend Factory"]
+    codexExec["CodexExecBackend<br/>codex exec"]
+    fakeBackend["FakeCodingBackend<br/>demo / tests"]
+    sdkBackend["CodexSdkBackend<br/>Planned placeholder"]
+    targetRepo["目标 Git 仓库<br/>diff / patch / protected paths"]
+    worktree["WorktreeManager<br/>parallel worktree"]
+  end
+
+  subgraph quality["质量与修复闭环"]
+    direction TB
+    gateRunner["GateRunner<br/>配置化质量门"]
+    repairSvc["RepairService<br/>最多 2 次修复循环"]
+    reviewer["Independent Reviewer<br/>read-only review"]
+    evidenceGate{"Evidence valid?"}
+    human["human_required<br/>人工确认 / 介入"]
+    ready["ready_for_human_review"]
+  end
+
+  subgraph artifacts["产物层"]
+    direction TB
+    artifactRepo[["ArtifactRepository<br/>原子写入 / revision / history"]]
+    lineage[["Lineage Guard<br/>inputs revision + sha256"]]
+    runDir[[".coductor/runs/&lt;run-id&gt;<br/>00_goal ... 08_release_manifest"]]
+    release["08_release_manifest.yaml<br/>本地发布清单"]
+  end
+
+  subgraph storage["持久化层"]
+    direction TB
+    sqlite[("SQLite<br/>.coductor/coductor.sqlite3")]
+    dbRuns[("runs")]
+    dbEvents[("events")]
+    dbCkpt[("workflow_checkpoints")]
+    dbLocks[("run_locks")]
+  end
+
+  title -.-> runSvc
+
+  user --> cli
+  user --> webui
+  cli --> runSvc
+  webui --> runSvc
+  webui -.-> sqlite
+
+  runSvc --> lgOrch
+  lgOrch --> wfState
+  wfState --> ckpt
+  ckpt --> sqlite
+
+  lgOrch --> goal
+  goal --> inspect --> spec --> plan --> execute --> integrate --> verify --> review --> deliver
+
+  plan -->|"solo / pipeline / parallel"| execute
+  execute --> backend
+  backend --> codexExec
+  backend --> fakeBackend
+  backend -.-> sdkBackend
+  codexExec --> targetRepo
+  fakeBackend --> targetRepo
+  execute --> worktree
+  worktree --> targetRepo
+
+  verify --> gateRunner
+  gateRunner -->|"fail fingerprint"| repairSvc
+  repairSvc -->|"bounded repair"| verify
+  review --> reviewer
+  reviewer -->|"blocking findings"| repairSvc
+  deliver --> evidenceGate
+  evidenceGate -->|"yes"| ready
+  evidenceGate -->|"no"| human
+  human -->|"approve / resume"| runSvc
+
+  mainlineAnchor["阶段 Artifact 链"]:::ghost
+  goal -.-> mainlineAnchor
+  deliver -.-> mainlineAnchor
+  mainlineAnchor -.-> artifactRepo
+  artifactRepo --> runDir
+  artifactRepo --> lineage
+  deliver --> release
+  release --> artifactRepo
+  lineage -.->|"resume 前校验"| human
+
+  runSvc --> dbRuns
+  runSvc --> dbEvents
+  runSvc --> dbCkpt
+  runSvc --> dbLocks
+  dbRuns --> sqlite
+  dbEvents --> sqlite
+  dbCkpt --> sqlite
+  dbLocks --> sqlite
+
+  classDef title fill:#FFFFFF,stroke:#FFFFFF,color:#111827,font-size:20px
+  classDef entry fill:#EAF3FF,stroke:#2F6DB3,color:#13263A,stroke-width:1px
+  classDef control fill:#EAF7F1,stroke:#2E8B57,color:#153225,stroke-width:1px
+  classDef stage fill:#FFFFFF,stroke:#64748B,color:#172033,stroke-width:1px
+  classDef execution fill:#FFF3EA,stroke:#C76B32,color:#3B1E0D,stroke-width:1px
+  classDef quality fill:#FFF7D6,stroke:#B7791F,color:#3A2508,stroke-width:1px
+  classDef artifact fill:#F5F3FF,stroke:#7C3AED,color:#241044,stroke-width:1px
+  classDef storage fill:#ECFEFF,stroke:#0891B2,color:#12343B,stroke-width:1px
+  classDef planned fill:#F6F6F6,stroke:#888,stroke-dasharray: 6 4,color:#444
+  classDef legend fill:#FFFFFF,stroke:#CBD5E1,color:#334155
+  classDef ghost fill:#FFFFFF,stroke:#FFFFFF,color:#FFFFFF
+
+  class title title
+  class user,cli,webui entry
+  class runSvc,lgOrch,wfState,ckpt control
+  class goal,inspect,spec,plan,execute,integrate,verify,review,deliver stage
+  class backend,codexExec,fakeBackend,targetRepo,worktree execution
+  class sdkBackend planned
+  class gateRunner,repairSvc,reviewer,evidenceGate,human,ready quality
+  class artifactRepo,lineage,runDir,release artifact
+  class sqlite,dbRuns,dbEvents,dbCkpt,dbLocks storage
+  class lgDone,lgPlan,lgYaml,lgDb legend

@@ -1,0 +1,141 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, PingFang SC, Microsoft YaHei, Arial, sans-serif","primaryColor":"#F8FAFC","primaryTextColor":"#172033","primaryBorderColor":"#CBD5E1","lineColor":"#64748B","secondaryColor":"#F1F5F9","tertiaryColor":"#FFFFFF","clusterBkg":"#FBFDFF","clusterBorder":"#D8E0EA","edgeLabelBackground":"#FFFFFF"},"flowchart":{"htmlLabels":true,"curve":"basis","nodeSpacing":46,"rankSpacing":72,"padding":18}}}%%
+%% Coductor Diagram 1: System Architecture Overview
+flowchart TB
+  title["<b>图 1 / 系统架构总览</b><br/><span>入口、编排、执行、质量、产物与持久化分层</span>"]
+
+  subgraph legend["图例"]
+    direction LR
+    lDone["当前已实现"]
+    lPlan["规划 / 占位"]
+    lYaml["YAML 事实来源"]
+    lDb["SQLite 持久化"]
+  end
+
+  subgraph entry["1. 用户入口"]
+    direction LR
+    user["用户 / Operator"]
+    cli["CLI<br/>coductor.cli"]
+    web["本地 Web 控制台<br/>coductor serve"]
+  end
+
+  subgraph control["2. 控制平面"]
+    direction LR
+    reportSvc["ReportService<br/>status / logs / explain"]
+    readSvc["ConsoleReadService<br/>只读 Run 与 Artifact"]
+    controlSvc["ConsoleControlService<br/>approve / pause / resume"]
+    runLocks["Run Locks<br/>互斥控制"]
+  end
+
+  subgraph orchestration["3. 编排层"]
+    direction LR
+    runSvc["RunService<br/>Run 生命周期"]
+    lgFlow["Contextual LangGraph<br/>StateGraph 节点编排"]
+    state["WorkflowState<br/>stage / status / artifacts"]
+    checkpoint["Checkpoint Store<br/>workflow_checkpoints"]
+  end
+
+  subgraph serviceLayer["4. 确定性服务层"]
+    direction LR
+    writer["WorkflowArtifactWriter<br/>Goal / Snapshot / Spec / Plan"]
+    planner["Spec / Plan Builder<br/>solo / pipeline / parallel"]
+    taskSvc["TaskExecutionService<br/>任务落盘 / dispatch / patch"]
+    verifySvc["WorkflowVerificationService<br/>integration / gates"]
+    repairSvc["RepairService<br/>bounded repair"]
+    reviewSvc["ReviewDeliveryService<br/>review / evidence"]
+    releaseSvc["ReleaseService<br/>release manifest"]
+  end
+
+  subgraph execution["5. 执行与验证适配层"]
+    direction LR
+    backendFactory["Backend Factory"]
+    fakeBackend["FakeCodingBackend<br/>demo / tests"]
+    codexBackend["CodexExecBackend<br/>codex exec"]
+    sdkBackend["CodexSdkBackend<br/>Planned placeholder"]
+    gateRunner["GateRunner<br/>subprocess gates"]
+    repoInspector["RepositoryInspector<br/>Git / manifests"]
+    worktreeMgr["WorktreeManager<br/>parallel worktree"]
+  end
+
+  subgraph persistence["6. 产物与持久化"]
+    direction LR
+    sqlite[("SQLite<br/>runs / events / checkpoints / locks")]
+    runDir[["Run Directory<br/>.coductor/runs/&lt;run-id&gt;"]]
+    artifacts[["YAML Artifacts<br/>00_goal ... 08_release_manifest"]]
+    integrity[["Artifact Integrity<br/>sha256 / revision / lineage"]]
+    targetRepo["目标 Git 仓库<br/>diff / patch / protected paths"]
+    gateLogs[["Gate Logs<br/>stdout / stderr"]]
+  end
+
+  title -.-> entry
+
+  user --> cli
+  user --> web
+  cli --> runSvc
+  cli --> reportSvc
+  web --> readSvc
+  web --> controlSvc
+
+  reportSvc --> sqlite
+  reportSvc --> artifacts
+  readSvc --> sqlite
+  readSvc --> artifacts
+  controlSvc --> runLocks
+  controlSvc --> runSvc
+
+  runSvc --> lgFlow
+  runSvc --> sqlite
+  lgFlow --> state
+  state --> checkpoint
+  checkpoint --> sqlite
+  lgFlow --> writer
+  lgFlow --> taskSvc
+  lgFlow --> verifySvc
+  lgFlow --> repairSvc
+  lgFlow --> reviewSvc
+
+  writer --> repoInspector
+  writer --> planner
+  writer --> artifacts
+  planner --> artifacts
+  taskSvc --> backendFactory
+  taskSvc --> worktreeMgr
+  taskSvc --> targetRepo
+  taskSvc --> artifacts
+  verifySvc --> gateRunner
+  verifySvc --> artifacts
+  repairSvc --> backendFactory
+  repairSvc --> artifacts
+  reviewSvc --> backendFactory
+  reviewSvc --> artifacts
+  releaseSvc --> artifacts
+  releaseSvc --> targetRepo
+
+  backendFactory --> fakeBackend
+  backendFactory --> codexBackend
+  backendFactory -.-> sdkBackend
+  gateRunner --> targetRepo
+  gateRunner --> gateLogs
+  repoInspector --> targetRepo
+  worktreeMgr --> targetRepo
+  artifacts --> runDir
+  artifacts --> integrity
+
+  classDef title fill:#FFFFFF,stroke:#FFFFFF,color:#111827,font-size:20px
+  classDef entry fill:#EAF3FF,stroke:#2F6DB3,color:#13263A,stroke-width:1px
+  classDef control fill:#F1ECFF,stroke:#6D55B8,color:#221B3A,stroke-width:1px
+  classDef orchestration fill:#EAF7F1,stroke:#2E8B57,color:#153225,stroke-width:1px
+  classDef service fill:#FFF6E5,stroke:#B77712,color:#3A2508,stroke-width:1px
+  classDef execution fill:#FEEEEE,stroke:#C25A5A,color:#3B1616,stroke-width:1px
+  classDef persistence fill:#EDF7FA,stroke:#3D8799,color:#133039,stroke-width:1px
+  classDef planned fill:#F6F6F6,stroke:#888,stroke-dasharray: 6 4,color:#444
+  classDef legend fill:#FFFFFF,stroke:#CBD5E1,color:#334155
+
+  class title title
+  class user,cli,web entry
+  class reportSvc,readSvc,controlSvc,runLocks control
+  class runSvc,lgFlow,state,checkpoint orchestration
+  class writer,planner,taskSvc,verifySvc,repairSvc,reviewSvc,releaseSvc service
+  class backendFactory,fakeBackend,codexBackend,gateRunner,repoInspector,worktreeMgr execution
+  class sdkBackend planned
+  class sqlite,runDir,artifacts,integrity,targetRepo,gateLogs persistence
+  class lDone,lPlan,lYaml,lDb legend

@@ -1,0 +1,256 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1100" viewBox="0 0 1800 1100" role="img" aria-labelledby="title desc">
+  <title id="title">Coductor 端到端运行流程</title>
+  <desc id="desc">Coductor 从 Goal 到 Evidence 的端到端运行流程地图，突出主流程、人工控制点、修复闭环和关键阶段 Artifact。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FBFDFF"/>
+      <stop offset="0.56" stop-color="#F4F8FC"/>
+      <stop offset="1" stop-color="#EEF4FA"/>
+    </linearGradient>
+    <linearGradient id="navy" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#172033"/>
+      <stop offset="1" stop-color="#263858"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="20" flood-color="#0F172A" flood-opacity="0.10"/>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0F172A" flood-opacity="0.07"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9Z" fill="#6B7C93"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9Z" fill="#BD5B5B"/>
+    </marker>
+    <style>
+      <![CDATA[
+      svg {
+        font-family: "Inter", "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+        text-rendering: geometricPrecision;
+      }
+      .title { font-size: 44px; font-weight: 820; fill: #111827; letter-spacing: 0; }
+      .subtitle { font-size: 18px; font-weight: 560; fill: #506176; }
+      .eyebrow { font-size: 12px; font-weight: 780; fill: #6B7C93; letter-spacing: .16em; text-transform: uppercase; }
+      .section-title { font-size: 22px; font-weight: 810; fill: #172033; }
+      .section-sub { font-size: 13px; font-weight: 560; fill: #64748B; }
+      .stage-num { font-size: 11px; font-weight: 820; fill: #2F6F9F; letter-spacing: .08em; }
+      .stage-title { font-size: 17px; font-weight: 810; fill: #172033; }
+      .stage-sub { font-size: 11.5px; font-weight: 600; fill: #64748B; }
+      .chip { font-size: 12px; font-weight: 720; fill: #334155; }
+      .small { font-size: 11px; font-weight: 650; fill: #64748B; }
+      .legend { font-size: 12px; font-weight: 650; fill: #475569; }
+      .glass { fill: rgba(255,255,255,.88); stroke: #D8E0EA; stroke-width: 1; }
+      .hero { fill: rgba(255,255,255,.82); stroke: #D8E0EA; stroke-width: 1; }
+      .dark { fill: url(#navy); }
+      .stage { fill: #FFFFFF; stroke: #D8E0EA; stroke-width: 1; }
+      .stage-green { fill: #F2FBF7; stroke: #CFE8DA; }
+      .stage-blue { fill: #F1F7FF; stroke: #CFE2F5; }
+      .stage-exec { fill: #FFF8F2; stroke: #EED8C8; }
+      .stage-artifact { fill: #F5F3FF; stroke: #DDD6FE; }
+      .stage-warn { fill: #FFF7DC; stroke: #F0DDAA; }
+      .stage-fail { fill: #FFF0F0; stroke: #F0C4C4; }
+      .line { fill: none; stroke: #6B7C93; stroke-width: 1.45; marker-end: url(#arrow); }
+      .line-soft { fill: none; stroke: #9AA8BC; stroke-width: 1.15; stroke-dasharray: 6 7; marker-end: url(#arrow); }
+      .line-red { fill: none; stroke: #BD5B5B; stroke-width: 1.45; marker-end: url(#arrowRed); }
+      ]]>
+    </style>
+  </defs>
+
+  <rect width="1800" height="1100" fill="url(#bg)"/>
+  <path d="M80 214 C380 130 650 240 930 178 C1220 116 1450 122 1720 208" fill="none" stroke="#DFEAF5" stroke-width="1.2"/>
+  <path d="M90 888 C430 820 680 910 966 840 C1240 770 1480 804 1710 875" fill="none" stroke="#E2EBF4" stroke-width="1.2"/>
+
+  <!-- Hero -->
+  <rect x="64" y="42" width="1672" height="132" rx="34" class="hero" filter="url(#shadow)"/>
+  <g transform="translate(100 72)">
+    <rect width="70" height="70" rx="24" class="dark"/>
+    <path d="M22 35H48M36 22L48 35L36 48" stroke="#99F6E4" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <text x="196" y="92" class="eyebrow">Runtime Map</text>
+  <text x="196" y="134" class="title">Coductor 端到端运行流程</text>
+  <text x="1106" y="96" class="subtitle">从目标到可验证交付的可恢复工程工作流</text>
+  <g transform="translate(1106 116)">
+    <rect width="456" height="34" rx="17" fill="#172033"/>
+    <text x="22" y="22" fill="#EAF2FF" font-size="13" font-weight="720">主线单向推进 · 控制点侧挂 · 修复闭环独立呈现</text>
+  </g>
+
+  <!-- Main flow panel -->
+  <rect x="74" y="216" width="1652" height="364" rx="36" class="glass" filter="url(#shadow)"/>
+  <text x="112" y="258" class="eyebrow">Primary Flow</text>
+  <text x="112" y="292" class="section-title">主运行路径</text>
+  <text x="112" y="316" class="section-sub">阶段 Artifact 作为下游事实来源；分支不打断主线阅读</text>
+
+  <g transform="translate(112 364)">
+    <g>
+      <rect width="142" height="118" rx="24" class="stage-blue" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">01</text>
+      <text x="20" y="58" class="stage-title">Goal</text>
+      <text x="20" y="82" class="stage-sub">00_goal.yaml</text>
+      <text x="20" y="102" class="stage-sub">目标契约</text>
+    </g>
+    <path d="M152 59H190" class="line"/>
+    <g transform="translate(200 0)">
+      <rect width="142" height="118" rx="24" class="stage" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">02</text>
+      <text x="20" y="58" class="stage-title">Inspect</text>
+      <text x="20" y="82" class="stage-sub">01_snapshot</text>
+      <text x="20" y="102" class="stage-sub">仓库上下文</text>
+    </g>
+    <path d="M352 59H390" class="line"/>
+    <g transform="translate(400 0)">
+      <rect width="142" height="118" rx="24" class="stage-green" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">03</text>
+      <text x="20" y="58" class="stage-title">Spec</text>
+      <text x="20" y="82" class="stage-sub">02_spec.yaml</text>
+      <text x="20" y="102" class="stage-sub">验收标准</text>
+    </g>
+    <path d="M552 59H590" class="line"/>
+    <g transform="translate(600 0)">
+      <rect width="142" height="118" rx="24" class="stage-green" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">04</text>
+      <text x="20" y="58" class="stage-title">Plan</text>
+      <text x="20" y="82" class="stage-sub">03_plan.yaml</text>
+      <text x="20" y="102" class="stage-sub">solo-first</text>
+    </g>
+    <path d="M752 59H790" class="line"/>
+    <g transform="translate(800 0)">
+      <rect width="156" height="118" rx="24" class="stage-exec" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">05</text>
+      <text x="20" y="58" class="stage-title">Execute</text>
+      <text x="20" y="82" class="stage-sub">task / request</text>
+      <text x="20" y="102" class="stage-sub">worker_result</text>
+    </g>
+    <path d="M966 59H1004" class="line"/>
+    <g transform="translate(1014 0)">
+      <rect width="142" height="118" rx="24" class="stage-exec" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">06</text>
+      <text x="20" y="58" class="stage-title">Integrate</text>
+      <text x="20" y="82" class="stage-sub">04_integration</text>
+      <text x="20" y="102" class="stage-sub">diff / merge</text>
+    </g>
+    <path d="M1166 59H1204" class="line"/>
+    <g transform="translate(1214 0)">
+      <rect width="142" height="118" rx="24" class="stage-exec" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">07</text>
+      <text x="20" y="58" class="stage-title">Verify</text>
+      <text x="20" y="82" class="stage-sub">05_gate</text>
+      <text x="20" y="102" class="stage-sub">quality gates</text>
+    </g>
+    <path d="M1366 59H1404" class="line"/>
+    <g transform="translate(1414 0)">
+      <rect width="142" height="118" rx="24" class="stage-artifact" filter="url(#softShadow)"/>
+      <text x="20" y="30" class="stage-num">08</text>
+      <text x="20" y="58" class="stage-title">Deliver</text>
+      <text x="20" y="82" class="stage-sub">06_review</text>
+      <text x="20" y="102" class="stage-sub">07_evidence</text>
+    </g>
+  </g>
+
+  <g transform="translate(112 520)">
+    <rect width="548" height="34" rx="17" fill="#F8FAFC" stroke="#D8E0EA"/>
+    <text x="22" y="22" class="chip">Release 单独由命令触发：生成 08_release_manifest.yaml，仅给出本地人工命令</text>
+  </g>
+
+  <!-- Control sidecar -->
+  <g transform="translate(1268 250)">
+    <rect width="412" height="86" rx="24" fill="#172033"/>
+    <text x="24" y="34" fill="#FFFFFF" font-size="17" font-weight="800">Human Control Sidecar</text>
+    <text x="24" y="58" fill="#CBD5E1" font-size="12.5" font-weight="590">approval · resume · pause · stop · rerun gates</text>
+  </g>
+
+  <!-- Lower panels -->
+  <g transform="translate(74 626)">
+    <rect width="760" height="298" rx="34" class="glass" filter="url(#shadow)"/>
+    <text x="34" y="44" class="eyebrow">Repair Loop</text>
+    <text x="34" y="78" class="section-title">修复闭环</text>
+    <text x="34" y="102" class="section-sub">失败证据被结构化为 repair_request，再回到 Gate；默认最多 2 次</text>
+    <g transform="translate(42 150)">
+      <rect width="118" height="64" rx="20" class="stage-fail"/>
+      <text x="23" y="29" class="stage-title">Failure</text>
+      <text x="26" y="48" class="stage-sub">gate failed</text>
+    </g>
+    <path d="M168 182H208" class="line-red"/>
+    <g transform="translate(218 150)">
+      <rect width="124" height="64" rx="20" class="stage-warn"/>
+      <text x="24" y="29" class="stage-title">Diagnose</text>
+      <text x="24" y="48" class="stage-sub">fingerprint</text>
+    </g>
+    <path d="M350 182H390" class="line-red"/>
+    <g transform="translate(400 150)">
+      <rect width="124" height="64" rx="20" class="stage-warn"/>
+      <text x="29" y="29" class="stage-title">Repair</text>
+      <text x="19" y="48" class="stage-sub">repair_result</text>
+    </g>
+    <path d="M532 182H572" class="line-red"/>
+    <g transform="translate(582 150)">
+      <rect width="126" height="64" rx="20" class="stage-green"/>
+      <text x="32" y="29" class="stage-title">Re-run</text>
+      <text x="33" y="48" class="stage-sub">Gate again</text>
+    </g>
+    <g transform="translate(42 236)">
+      <rect width="292" height="34" rx="17" fill="#FFF7DC" stroke="#F0DDAA"/>
+      <text x="18" y="22" class="chip">超过修复上限 → human_required</text>
+    </g>
+    <g transform="translate(356 236)">
+      <rect width="314" height="34" rx="17" fill="#F8FAFC" stroke="#D8E0EA"/>
+      <text x="18" y="22" class="chip">patch 与失败证据进入 Evidence</text>
+    </g>
+  </g>
+
+  <g transform="translate(866 626)">
+    <rect width="392" height="298" rx="34" class="glass" filter="url(#shadow)"/>
+    <text x="34" y="44" class="eyebrow">Decision Cards</text>
+    <text x="34" y="78" class="section-title">人工交互点</text>
+    <text x="34" y="102" class="section-sub">只保留会改变运行路线的控制点</text>
+    <g transform="translate(34 138)">
+      <rect width="324" height="46" rx="18" class="stage-warn"/>
+      <text x="20" y="28" class="chip">Spec / Plan 需要审批 → approve + resume</text>
+    </g>
+    <g transform="translate(34 198)">
+      <rect width="324" height="46" rx="18" class="stage-warn"/>
+      <text x="20" y="28" class="chip">pause / stop 持久化后不继续执行</text>
+    </g>
+    <g transform="translate(34 258)">
+      <rect width="324" height="28" rx="14" fill="#F8FAFC" stroke="#D8E0EA"/>
+      <text x="18" y="19" class="small">verify / review 可在交付前重跑</text>
+    </g>
+  </g>
+
+  <g transform="translate(1290 626)">
+    <rect width="436" height="298" rx="34" class="glass" filter="url(#shadow)"/>
+    <text x="34" y="44" class="eyebrow">Run Outcome</text>
+    <text x="34" y="78" class="section-title">交付状态</text>
+    <text x="34" y="102" class="section-sub">完成状态由 gate、review 和 Evidence validation 决定</text>
+    <g transform="translate(34 142)">
+      <rect width="170" height="64" rx="22" class="stage-green"/>
+      <text x="22" y="29" class="stage-title">ready_for_review</text>
+      <text x="22" y="48" class="stage-sub">证据完整</text>
+    </g>
+    <g transform="translate(228 142)">
+      <rect width="174" height="64" rx="22" class="stage-warn"/>
+      <text x="22" y="29" class="stage-title">human_required</text>
+      <text x="22" y="48" class="stage-sub">需要人工判断</text>
+    </g>
+    <g transform="translate(34 226)">
+      <rect width="368" height="38" rx="19" class="stage-artifact"/>
+      <text x="22" y="24" class="chip">delivery-report.md 面向人类阅读，YAML 仍是事实来源</text>
+    </g>
+  </g>
+
+  <!-- Legend -->
+  <rect x="74" y="990" width="1652" height="48" rx="24" fill="#FFFFFF" stroke="#D8E0EA" filter="url(#softShadow)"/>
+  <g transform="translate(112 1005)">
+    <path d="M0 10H42" class="line"/>
+    <text x="56" y="15" class="legend">主流程推进</text>
+  </g>
+  <g transform="translate(310 1005)">
+    <path d="M0 10H42" class="line-red"/>
+    <text x="56" y="15" class="legend">失败 / 修复路径</text>
+  </g>
+  <g transform="translate(558 1001)">
+    <rect width="18" height="18" rx="6" class="stage-warn"/>
+    <text x="30" y="16" class="legend">人工控制点</text>
+  </g>
+  <text x="1164" y="1020" class="legend">图中不展开 CLI 全命令、后端 factory、SQLite 表字段和 YAML schema</text>
+</svg>
