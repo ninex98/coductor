@@ -53,14 +53,14 @@ except ModuleNotFoundError:  # pragma: no cover
 
 console = Console() if Console is not None else None
 CLI_BANNER = r"""
-       __                         CODUCTOR
-      /  \__                      AI Coding Workflow Engine
-     /      \___
-    /  /\       \                 From goal to verified change.
-   /__/  \___    \
-          /  \____\               init    prepare project
-         /__/  /__/               run     verified workflow
-                                   status  inspect run state
+   ______          __           __
+  / ____/___  ____/ /_  _______/ /_____  _____
+ / /   / __ \/ __  / / / / ___/ __/ __ \/ ___/
+/ /___/ /_/ / /_/ / /_/ / /__/ /_/ /_/ / /
+\____/\____/\__,_/\__,_/\___/\__/\____/_/
+
+        AI Coding Workflow Engine
+        From goal to verified change.
 """
 
 CLI_HELP = """
@@ -116,7 +116,7 @@ def _print_plain(message: str) -> None:
 
 
 def print_quick_start() -> None:
-    _print_plain(CLI_BANNER.strip())
+    _print_plain(CLI_BANNER.strip("\n"))
     _print_plain("")
     _print(CLI_HELP.strip())
 

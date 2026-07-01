@@ -41,8 +41,8 @@ def test_cli_without_command_shows_quick_start() -> None:
 
     assert result.exit_code == 0
     assert "CODUCTOR" in result.output
-    assert "__" in result.output
-    assert "/  \\__" in result.output
+    assert "/ ____/___  ____/ /_  _______/ /_____  _____" in result.output
+    assert "\\____/\\____/\\__,_/\\__,_/\\___/\\__/\\____/_/" in result.output
     assert "From goal to verified change." in result.output
     assert "Quick start / 快速开始" in result.output
     assert "coductor init" in result.output
