@@ -19,9 +19,11 @@ class TextReviewBackend(FakeCodingBackend):
     def __init__(self, review_summary: str) -> None:
         super().__init__()
         self.review_summary = review_summary
+        self.prompts: list[str] = []
 
     def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
         if request.role == "reviewer":
+            self.prompts.append(request.prompt)
             return WorkerResult(
                 worker_id=request.worker_id,
                 thread_id=handle.thread_id,
@@ -69,7 +71,8 @@ def test_review_delivery_service_writes_review_evidence_and_report(tmp_path):
         ),
     )
     repo.write("tasks/T001/worker_result.yaml", worker_result)
-    service = ReviewDeliveryService(tmp_path, config, TextReviewBackend("VERDICT: pass"), writer)
+    backend = TextReviewBackend("VERDICT: pass")
+    service = ReviewDeliveryService(tmp_path, config, backend, writer)
 
     review = service.review(repo, "run_abc", gate_report, ["T001"])
     evidence = service.evidence(
@@ -91,6 +94,9 @@ def test_review_delivery_service_writes_review_evidence_and_report(tmp_path):
     assert (tmp_path / "06_review.yaml").exists()
     assert (tmp_path / "07_evidence.yaml").exists()
     assert (tmp_path / "delivery-report.md").exists()
+    assert "Required Reviewer Output:" in backend.prompts[0]
+    assert "VERDICT: pass|fail" in backend.prompts[0]
+    assert "Check 07_goal_satisfaction.yaml when present" in backend.prompts[0]
 
 
 def test_review_delivery_service_parses_blocking_reviewer_output(tmp_path):

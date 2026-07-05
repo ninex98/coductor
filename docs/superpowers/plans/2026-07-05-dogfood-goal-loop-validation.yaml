@@ -1,0 +1,77 @@
+schema_version: "1.0"
+artifact_type: coductor_validation_report
+artifact_id: validation_goal_loop_dogfood_20260705
+status: passed
+created_at: "2026-07-05T21:37:00+08:00"
+producer:
+  kind: assistant
+  name: codex
+data:
+  title: "Goal Satisfaction Loop Dogfood Validation"
+  objective: >
+    使用 Coductor 自身在隔离临时项目中跑一次端到端目标，验证
+    verification_plan、tool_result、goal_satisfaction、evidence bundle
+    和 Web Goal Loop 投影是否形成一致闭环。
+  environment:
+    project_root: "/private/tmp/coductor-dogfood-20260705-v2"
+    config_path: "/private/tmp/coductor-dogfood-20260705-v2/coductor.yaml"
+    backend_provider: fake
+    network_required: false
+  command:
+    - >
+      /Users/ninex/Projects/hll-ecosystem/apps/coductor/.venv/bin/coductor run
+      "dogfood evidence test flow" --backend fake
+  run:
+    run_id: "run_01KWS7YENPKJB6TWSRAS6EPHGE"
+    run_dir: "/private/tmp/coductor-dogfood-20260705-v2/.coductor/runs/run_01KWS7YENPKJB6TWSRAS6EPHGE"
+    final_status: ready_for_human_review
+  assertions:
+    - id: A001
+      statement: "run 生成 verification_plan、tool_result、goal_satisfaction 和 evidence bundle"
+      status: passed
+      evidence:
+        - "03_verification_plan.yaml"
+        - "tool_runs/dogfood_tool/tool_result.yaml"
+        - "07_goal_satisfaction.yaml"
+        - "07_evidence.yaml"
+    - id: A002
+      statement: "AC002 由质量门和 command-backed tool check 共同证明"
+      status: passed
+      evidence:
+        - "03_verification_plan.yaml.data.items[1].tool == quality_gate+tool_check"
+        - "07_goal_satisfaction.yaml.data.criterion_results[1].evidence includes tool_runs/dogfood_tool/tool_result.yaml"
+    - id: A003
+      statement: "goal_satisfaction verdict 为 satisfied，且三条验收标准全部 satisfied"
+      status: passed
+      evidence:
+        - "07_goal_satisfaction.yaml.data.verdict == satisfied"
+        - "07_goal_satisfaction.yaml.data.criterion_results length == 3"
+    - id: A004
+      statement: "Evidence Bundle 的 acceptance_results 覆盖所有 goal satisfaction criteria"
+      status: passed
+      evidence:
+        - "07_evidence.yaml.data.acceptance_results includes AC001, AC002, AC003"
+    - id: A005
+      statement: "Web Console API 能投影 Goal Loop 摘要，不需要读取自由文本作为事实源"
+      status: passed
+      evidence:
+        - "GET /api/runs/run_01KWS7YENPKJB6TWSRAS6EPHGE data.goal_loop.verdict == satisfied"
+        - "data.goal_loop.tools[0].status == passed"
+  issue_found_and_fixed:
+    - id: IF001
+      status: fixed
+      finding: >
+        首次 dogfood 时，07_goal_satisfaction.yaml 覆盖 AC001-AC003，
+        但 07_evidence.yaml.data.acceptance_results 只保留 gate fallback AC001。
+      fix:
+        - "EvidenceService 在存在 goal_satisfaction 时从 criterion_results 生成 acceptance_results"
+        - "satisfied -> passed, not_satisfied -> failed, uncertain -> manual"
+      tests:
+        - "tests/unit/test_evidence_service.py::test_evidence_acceptance_results_follow_goal_satisfaction_criteria"
+  validation_commands:
+    - ".venv/bin/pytest tests/unit/test_evidence_service.py -q"
+    - ".venv/bin/ruff check src/coductor/services/evidence_service.py tests/unit/test_evidence_service.py"
+    - ".venv/bin/mypy src"
+  outcome: >
+    Dogfood 验证通过。当前闭环能够解释目标是否满足、每条验收标准对应的证据、
+    tool check 状态，以及最终 Evidence Bundle 为什么可以 ready_for_human_review。

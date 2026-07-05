@@ -13,6 +13,7 @@ from coductor.artifacts.models import (
     Finding,
     GateReportData,
     GoalData,
+    GoalSatisfactionReportData,
     Producer,
     ReviewReportData,
 )
@@ -26,7 +27,7 @@ from coductor.domain.enums import (
     ProducerKind,
     SandboxMode,
 )
-from coductor.prompts.renderer import render_worker_prompt
+from coductor.prompts.renderer import PromptSection, render_worker_prompt
 from coductor.services.evidence_service import EvidenceService
 from coductor.services.usage import usage_from_backend
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
@@ -57,13 +58,25 @@ class ReviewDeliveryService:
             for task_id in completed_task_ids
             if (repo.root / f"tasks/{task_id}/patch.diff").exists()
         ]
+        satisfaction_paths = (
+            ["07_goal_satisfaction.yaml"]
+            if (repo.root / "07_goal_satisfaction.yaml").exists()
+            else []
+        )
         request = WorkerRequest(
             worker_id="worker_review",
             role="reviewer",
             prompt=render_worker_prompt(
                 "reviewer",
-                ["02_spec.yaml", "05_gate_report.yaml", *patch_paths],
+                [
+                    "02_spec.yaml",
+                    "03_verification_plan.yaml",
+                    "05_gate_report.yaml",
+                    *satisfaction_paths,
+                    *patch_paths,
+                ],
                 "independently review the verified change",
+                sections=_review_prompt_sections(gate_report, completed_task_ids, patch_paths),
             ),
             workspace_path=self.root.as_posix(),
             sandbox=SandboxMode.READ_ONLY,
@@ -109,6 +122,7 @@ class ReviewDeliveryService:
         review: ArtifactEnvelope[ReviewReportData],
         strategy: ExecutionStrategy,
         completed_task_ids: list[str],
+        goal_satisfaction: ArtifactEnvelope[GoalSatisfactionReportData] | None = None,
     ) -> ArtifactEnvelope[EvidenceBundleData]:
         service = EvidenceService()
         data = service.build(
@@ -118,6 +132,9 @@ class ReviewDeliveryService:
             gate_report=gate_report.data,
             review=review.data,
             completed_tasks=completed_task_ids,
+            goal_satisfaction=(
+                goal_satisfaction.data if goal_satisfaction is not None else None
+            ),
         )
         envelope = self.artifacts.envelope(
             run_id=run_id,
@@ -133,6 +150,15 @@ class ReviewDeliveryService:
             inputs=[
                 ArtifactInput.model_validate(repo.input_for("05_gate_report.yaml", gate_report)),
                 ArtifactInput.model_validate(repo.input_for("06_review.yaml", review)),
+                *(
+                    [
+                        ArtifactInput.model_validate(
+                            repo.input_for("07_goal_satisfaction.yaml", goal_satisfaction)
+                        )
+                    ]
+                    if goal_satisfaction is not None
+                    else []
+                ),
             ],
         )
         repo.write("07_evidence.yaml", envelope)
@@ -174,6 +200,45 @@ def parse_review_summary(
         verdict=verdict,
         requires_repair=requires_repair,
     )
+
+
+def _review_prompt_sections(
+    gate_report: ArtifactEnvelope[GateReportData],
+    completed_task_ids: list[str],
+    patch_paths: list[str],
+) -> list[PromptSection]:
+    gate_items = [
+        (
+            f"{gate.id}: status={gate.status}, required={gate.required}, "
+            f"command={gate.command}, stdout={gate.stdout_path}, stderr={gate.stderr_path}"
+        )
+        for gate in gate_report.data.gates
+    ]
+    return [
+        PromptSection(
+            "Review Scope",
+            [
+                f"completed_tasks: {', '.join(completed_task_ids) or '(none)'}",
+                f"patches: {', '.join(patch_paths) or '(none)'}",
+                (
+                    "Check 07_goal_satisfaction.yaml when present; do not assume gates "
+                    "alone prove the goal."
+                ),
+            ],
+        ),
+        PromptSection("Gate Results", gate_items or ["No quality gates were configured."]),
+        PromptSection(
+            "Required Reviewer Output",
+            [
+                "VERDICT: pass|fail",
+                "BLOCKING: true|false",
+                (
+                    "FINDING: severity=high; category=correctness; file=path; "
+                    "line=1; description=...; recommendation=..."
+                ),
+            ],
+        ),
+    ]
 
 
 def _parse_finding(payload: str, index: int) -> Finding:

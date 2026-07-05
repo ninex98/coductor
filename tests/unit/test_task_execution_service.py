@@ -90,6 +90,16 @@ class RecordingBackend(FakeCodingBackend):
         return super().continue_worker(handle, request)
 
 
+class PromptRecordingBackend(FakeCodingBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts: list[str] = []
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        self.prompts.append(request.prompt)
+        return super().continue_worker(handle, request)
+
+
 def test_task_execution_service_dispatches_pipeline_tasks_with_contracts(tmp_path):
     config = CoductorConfig.default()
     config.backend.provider = "fake"
@@ -110,6 +120,41 @@ def test_task_execution_service_dispatches_pipeline_tasks_with_contracts(tmp_pat
     task_two = load_yaml((tmp_path / "tasks/T002/task.yaml").read_text(encoding="utf-8"))
     assert task_two["data"]["contracts"][0]["path"] == "contracts/generated.schema.json"
     assert service.failed_task_ids(repo, ["T001", "T002"]) == []
+
+
+def test_builder_prompt_includes_acceptance_and_verification_context(tmp_path):
+    config = CoductorConfig.default()
+    config.backend.provider = "fake"
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    goal = writer.write_goal(
+        repo,
+        "run_abc",
+        "修复 CLI evidence 状态误报，并补充测试",
+        ExecutionMode.AUTO,
+    )
+    snapshot = writer.write_snapshot(repo, "run_abc", goal)
+    spec = writer.write_spec(repo, "run_abc", goal, snapshot)
+    writer.write_verification_plan(repo, "run_abc", spec)
+    plan = writer.write_plan(repo, "run_abc", spec, snapshot, ExecutionMode.AUTO)
+    backend = PromptRecordingBackend()
+    service = TaskExecutionService(tmp_path, config, backend, writer)
+
+    service.execute_plan_task(
+        repo,
+        "run_abc",
+        plan,
+        plan.data.tasks[0],
+        {},
+        on_dispatch=lambda *_: None,
+    )
+
+    prompt = backend.prompts[0]
+    assert "Acceptance Criteria:" in prompt
+    assert "Verification Plan:" in prompt
+    assert "03_verification_plan.yaml" in prompt
+    assert "Evidence" in prompt or "evidence" in prompt
+    assert "Path Boundaries:" in prompt
 
 
 def test_task_execution_service_executes_one_plan_task_with_contract_boundary(tmp_path):

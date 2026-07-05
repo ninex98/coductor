@@ -76,11 +76,73 @@ class ConsoleEvidenceSummary(BaseModel):
     final_status: str
     gate_summary: dict[str, Any]
     review_summary: dict[str, Any]
+    goal_satisfaction: dict[str, Any] = Field(default_factory=dict)
     validation: dict[str, Any]
     completed_tasks: list[str] = Field(default_factory=list)
     evidence_files: list[dict[str, Any]] = Field(default_factory=list)
     manual_checks: list[str] = Field(default_factory=list)
     known_risks: list[str] = Field(default_factory=list)
+
+
+class ConsoleGoalCriterionSummary(BaseModel):
+    criterion_id: str
+    description: str | None = None
+    verification: str | None = None
+    tool: str | None = None
+    required: bool = True
+    status: str = "unknown"
+    evidence: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class ConsoleToolEvidenceSummary(BaseModel):
+    path: str
+    check_id: str
+    tool_run_id: str
+    tool: str
+    required: bool
+    status: str
+    command: str
+    duration_ms: int = 0
+    stdout_path: str
+    stderr_path: str
+    artifacts: list[str] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+    observations: dict[str, Any] = Field(default_factory=dict)
+    failure_fingerprint: str | None = None
+
+
+class ConsoleRepairSummary(BaseModel):
+    path: str
+    reason: str
+    attempt: int
+    max_attempts: int
+    missing_criteria: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
+
+
+class ConsoleGoalLoopSummary(BaseModel):
+    verdict: str = "pending"
+    satisfied: int = 0
+    not_satisfied: int = 0
+    uncertain: int = 0
+    unknown: int = 0
+    planned_criteria: int = 0
+    all_required_criteria_planned: bool | None = None
+    warnings: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    repair_recommendation: str | None = None
+    requires_repair: bool = False
+    requires_human: bool = False
+    goal_iteration: int = 0
+    satisfaction_repair_attempts: int = 0
+    last_satisfaction_error: str | None = None
+    stale_artifacts: list[str] = Field(default_factory=list)
+    criteria: list[ConsoleGoalCriterionSummary] = Field(default_factory=list)
+    tools: list[ConsoleToolEvidenceSummary] = Field(default_factory=list)
+    repairs: list[ConsoleRepairSummary] = Field(default_factory=list)
 
 
 class ConsoleReleaseSummary(BaseModel):
@@ -97,6 +159,7 @@ class ConsoleRunDetail(ConsoleRunSummary):
     events: list[ConsoleEvent] = Field(default_factory=list)
     artifacts: list[ConsoleArtifactSummary] = Field(default_factory=list)
     evidence: ConsoleEvidenceSummary | None = None
+    goal_loop: ConsoleGoalLoopSummary | None = None
     release: ConsoleReleaseSummary | None = None
 
 

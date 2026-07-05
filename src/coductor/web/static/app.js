@@ -50,6 +50,8 @@ function actionLabel(action) {
       verify: "Verify",
       review: "Review",
       release: "Release",
+      "rerun-tool-checks": "Tool Checks",
+      "rerun-satisfaction": "Satisfaction",
     }[action] || action
   );
 }
@@ -121,6 +123,10 @@ function renderCurrentView() {
     renderEvidence(panel, run);
     return;
   }
+  if (state.activeTab === "goal-loop") {
+    renderGoalLoop(panel, run);
+    return;
+  }
   if (state.activeTab === "release") {
     renderRelease(panel, run);
     return;
@@ -129,7 +135,18 @@ function renderCurrentView() {
 }
 
 function renderOverview(panel, run) {
-  const actions = ["approve", "pause", "stop", "resume", "verify", "review", "release"];
+  const actions = [
+    "resume",
+    "verify",
+    "rerun-tool-checks",
+    "rerun-satisfaction",
+    "review",
+    "approve",
+    "release",
+    "pause",
+    "stop",
+  ];
+  const loop = run.goal_loop;
   panel.innerHTML = `
     <article class="summary-card">
       <div class="summary-header">
@@ -168,6 +185,17 @@ function renderOverview(panel, run) {
         <strong>${escapeHtml(run.current_stage || "pending")}</strong>
       </div>
     </section>
+    ${
+      loop
+        ? `
+          <section class="metric-row">
+            ${metricCard("Goal verdict", loop.verdict)}
+            ${metricCard("Satisfied", loop.satisfied)}
+            ${metricCard("Needs work", loop.not_satisfied)}
+          </section>
+        `
+        : ""
+    }
   `;
   renderNotice();
   for (const button of panel.querySelectorAll("[data-action]")) {
@@ -306,6 +334,7 @@ function renderEvidence(panel, run) {
     return;
   }
   const validation = evidence.validation || {};
+  const goalSatisfaction = evidence.goal_satisfaction || {};
   panel.innerHTML = `
     <section class="summary-card">
       <div class="summary-header">
@@ -323,6 +352,11 @@ function renderEvidence(panel, run) {
       ${metricCard("Gates failed", evidence.gate_summary?.failed ?? 0)}
       ${metricCard("Blocking review", evidence.review_summary?.blocking_findings ?? 0)}
     </section>
+    <section class="metric-row">
+      ${metricCard("Goal verdict", goalSatisfaction.verdict || "pending")}
+      ${metricCard("Satisfied criteria", goalSatisfaction.satisfied ?? 0)}
+      ${metricCard("Uncertain criteria", goalSatisfaction.uncertain ?? 0)}
+    </section>
     <section class="data-card">
       <h2>Validation</h2>
       ${listBlock(validation.errors || [], "No validation errors.")}
@@ -336,6 +370,78 @@ function renderEvidence(panel, run) {
       ${listBlock([...(evidence.known_risks || []), ...(evidence.manual_checks || [])], "No manual checks or known risks listed.")}
     </section>
   `;
+}
+
+function renderGoalLoop(panel, run) {
+  const loop = run.goal_loop;
+  if (!loop) {
+    panel.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-title">No goal loop</div>
+        <p>Goal loop artifacts have not been written for this run.</p>
+      </div>
+    `;
+    return;
+  }
+  panel.innerHTML = `
+    <section class="summary-card">
+      <div class="summary-header">
+        <div>
+          <div class="summary-title">Goal Loop</div>
+          <div class="summary-subtitle">
+            Iteration ${escapeHtml(loop.goal_iteration)} · repair ${escapeHtml(loop.satisfaction_repair_attempts)}
+          </div>
+        </div>
+        <span class="status-pill ${statusClass(loop.verdict)}">${escapeHtml(loop.verdict)}</span>
+      </div>
+      <div class="action-row">
+        ${["rerun-tool-checks", "rerun-satisfaction"]
+          .map(
+            (action) => `
+              <button class="action-button" type="button" data-action="${action}"
+                ${state.busyAction ? "disabled" : ""}>
+                ${state.busyAction === action ? "Working..." : actionLabel(action)}
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+      <div id="actionNotice" class="action-notice" aria-live="polite"></div>
+    </section>
+    <section class="metric-row">
+      ${metricCard("Planned criteria", loop.planned_criteria)}
+      ${metricCard("Needs work", loop.not_satisfied)}
+      ${metricCard("Uncertain", loop.uncertain)}
+    </section>
+    <section class="data-card">
+      <h2>Criteria</h2>
+      ${criterionRows(loop.criteria || [])}
+    </section>
+    <section class="data-card">
+      <h2>Tool Evidence</h2>
+      ${toolRows(loop.tools || [])}
+    </section>
+    <section class="data-card">
+      <h2>Repair Iterations</h2>
+      ${repairRows(loop.repairs || [])}
+    </section>
+    <section class="data-card">
+      <h2>Gaps</h2>
+      ${listBlock(
+        [
+          ...(loop.missing_evidence || []),
+          ...(loop.warnings || []),
+          ...(loop.stale_artifacts || []),
+          ...(loop.last_satisfaction_error ? [loop.last_satisfaction_error] : []),
+        ],
+        "No goal loop gaps listed.",
+      )}
+    </section>
+  `;
+  renderNotice();
+  for (const button of panel.querySelectorAll("[data-action]")) {
+    button.addEventListener("click", () => runAction(button.dataset.action));
+  }
 }
 
 function renderRelease(panel, run) {
@@ -393,7 +499,10 @@ function renderDoctor(panel) {
       <h2>Doctor</h2>
       <div class="doctor-grid">
         ${doctorItem("Backend", checks.backend_provider)}
+        ${doctorItem("Effective", checks.backend_effective_provider)}
         ${doctorItem("Available", checks.backend_available)}
+        ${doctorItem("Implemented", checks.backend_implemented)}
+        ${doctorItem("Stability", checks.backend_stability)}
         ${doctorItem("Codex", checks.codex)}
         ${doctorItem("Database", checks.database)}
         ${doctorItem("Network", permission.network_access)}
@@ -430,6 +539,102 @@ function fileRow(file) {
       <code>${escapeHtml(file.path)}</code>
     </div>
   `;
+}
+
+function criterionRows(criteria) {
+  if (!criteria.length) {
+    return '<div class="empty-inline">No criteria listed.</div>';
+  }
+  return `
+    <div class="criteria-list">
+      ${criteria
+        .map(
+          (criterion) => `
+            <div class="criterion-row">
+              <div>
+                <strong>${escapeHtml(criterion.criterion_id)}</strong>
+                <span>${escapeHtml(criterion.description || "No description")}</span>
+              </div>
+              <span class="status-pill ${statusClass(criterion.status)}">${escapeHtml(criterion.status)}</span>
+              <div class="criterion-meta">
+                <span>${escapeHtml(criterion.tool || "unknown")}</span>
+                <span>${escapeHtml(criterion.required ? "required" : "optional")}</span>
+              </div>
+              <div class="criterion-paths">
+                ${pathChips([...(criterion.evidence || []), ...(criterion.missing_evidence || [])])}
+              </div>
+              <small>${escapeHtml(criterion.reason || "")}</small>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function toolRows(tools) {
+  if (!tools.length) {
+    return '<div class="empty-inline">No tool results listed.</div>';
+  }
+  return `
+    <div class="tool-list">
+      ${tools
+        .map(
+          (tool) => `
+            <div class="tool-row">
+              <div>
+                <strong>${escapeHtml(tool.check_id || tool.tool_run_id)}</strong>
+                <span>${escapeHtml(tool.tool)} · ${escapeHtml(tool.command)}</span>
+              </div>
+              <span class="status-pill ${statusClass(tool.status)}">${escapeHtml(tool.status)}</span>
+              <div class="criterion-meta">
+                <span>${escapeHtml(tool.duration_ms)} ms</span>
+                <span>${escapeHtml(tool.required ? "required" : "optional")}</span>
+              </div>
+              <div class="criterion-paths">
+                ${pathChips([tool.path, tool.stdout_path, tool.stderr_path, ...(tool.artifacts || [])])}
+              </div>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function repairRows(repairs) {
+  if (!repairs.length) {
+    return '<div class="empty-inline">No repair requests listed.</div>';
+  }
+  return `
+    <div class="tool-list">
+      ${repairs
+        .map(
+          (repair) => `
+            <div class="tool-row">
+              <div>
+                <strong>${escapeHtml(repair.reason)}</strong>
+                <span>${escapeHtml(repair.path)}</span>
+              </div>
+              <span>${escapeHtml(repair.attempt)} / ${escapeHtml(repair.max_attempts)}</span>
+              <div class="criterion-paths">
+                ${pathChips([...(repair.missing_criteria || []), ...(repair.missing_evidence || [])])}
+              </div>
+              <small>${escapeHtml(repair.recommended_action || "")}</small>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function pathChips(paths) {
+  const clean = (paths || []).filter(Boolean);
+  if (!clean.length) {
+    return '<span class="muted-inline">-</span>';
+  }
+  return clean.map((path) => `<code>${escapeHtml(path)}</code>`).join("");
 }
 
 function commandList(commands) {

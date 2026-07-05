@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coductor.artifacts.models import GateReportData, GateResultData, Producer, TaskData
+from coductor.artifacts.models import (
+    GateReportData,
+    GateResultData,
+    GoalCriterionResult,
+    GoalSatisfactionReportData,
+    Producer,
+    TaskData,
+)
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.serializer import load_yaml
 from coductor.backends.base import BackendUsage, WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
 from coductor.domain.enums import ArtifactStatus, ArtifactType, ProducerKind
+from coductor.services import repair_service as repair_module
 from coductor.services.repair_service import RepairService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
@@ -33,6 +41,16 @@ class FileChangingRepairBackend(FakeCodingBackend):
             summary="repair changed math_utils.py",
             files_changed=["math_utils.py"],
         )
+
+
+class PromptRecordingRepairBackend(FakeCodingBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts: list[str] = []
+
+    def continue_worker(self, handle: WorkerHandle, request: WorkerRequest) -> WorkerResult:
+        self.prompts.append(request.prompt)
+        return super().continue_worker(handle, request)
 
 
 def _write_gate_report(
@@ -182,3 +200,79 @@ def test_repair_request_does_not_claim_thread_resume_when_backend_cannot_resume(
     )
 
     assert repair_request["data"]["resume_thread_id"] is None
+
+
+def test_repair_request_uses_effective_backend_capability_for_sdk_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "codex_sdk"
+    config.backend.fallback = "codex_exec"
+    monkeypatch.setattr(repair_module, "is_codex_sdk_available", lambda: True)
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    gate_report = _write_gate_report(repo, writer)
+    service = RepairService(tmp_path, config, UsageRepairBackend(), writer)
+
+    service.repair(
+        repo,
+        "run_abc",
+        WorkerHandle(worker_id="worker_T001", thread_id="thread_builder"),
+        gate_report,
+        attempt=1,
+        target_task_id="T001",
+    )
+
+    repair_request = load_yaml(
+        (tmp_path / "repairs/R001/repair_request.yaml").read_text(encoding="utf-8")
+    )
+
+    assert repair_request["data"]["resume_thread_id"] is None
+
+
+def test_goal_satisfaction_repair_prompt_includes_missing_evidence(tmp_path: Path) -> None:
+    config = CoductorConfig.default()
+    repo = ArtifactRepository(tmp_path)
+    writer = WorkflowArtifactWriter(tmp_path, config)
+    gate_report = _write_gate_report(repo, writer)
+    goal_satisfaction = writer.envelope(
+        run_id="run_abc",
+        artifact_type=ArtifactType.GOAL_SATISFACTION_REPORT,
+        artifact_id_prefix="art_goal_satisfaction",
+        status=ArtifactStatus.HUMAN_REQUIRED,
+        producer=Producer(kind=ProducerKind.SYSTEM, name="test"),
+        data=GoalSatisfactionReportData(
+            verdict="not_satisfied",
+            criterion_results=[
+                GoalCriterionResult(
+                    criterion_id="AC001",
+                    status="not_satisfied",
+                    missing_evidence=["browser/screenshot.png"],
+                    reason="planned evidence is missing",
+                )
+            ],
+            missing_evidence=["browser/screenshot.png"],
+            requires_repair=True,
+        ),
+    )
+    repo.write("07_goal_satisfaction.yaml", goal_satisfaction)
+    backend = PromptRecordingRepairBackend()
+    service = RepairService(tmp_path, config, backend, writer)
+
+    service.repair(
+        repo,
+        "run_abc",
+        WorkerHandle(worker_id="worker_T001", thread_id="thread_builder"),
+        gate_report,
+        attempt=1,
+        target_task_id="T001",
+        reason="goal_not_satisfied",
+        goal_satisfaction=goal_satisfaction,
+    )
+
+    prompt = backend.prompts[0]
+    assert "07_goal_satisfaction.yaml" in prompt
+    assert "reason: goal_not_satisfied" in prompt
+    assert "AC001" in prompt
+    assert "browser/screenshot.png" in prompt

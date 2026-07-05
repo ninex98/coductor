@@ -6,14 +6,16 @@ import os
 import time
 from pathlib import Path
 
+from coductor.artifacts.models import ArtifactEnvelope, GateReportData, VerificationPlanData
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.config.loader import load_config
 from coductor.constants import CODUCTOR_DIR
-from coductor.domain.enums import RunStatus
+from coductor.domain.enums import ArtifactType, RunStatus
 from coductor.exceptions import CoductorError
 from coductor.services.release_service import ReleaseService
 from coductor.services.report_service import CONTROL_STATUS, ReportService, RunReportError
 from coductor.services.run_service import RUN_LOCK_STALE_AFTER_SECONDS, RunService, utc_now
+from coductor.services.tool_verification_service import ToolVerificationService
 from coductor.storage.database import Database
 from coductor.web.schemas import ConsoleActionResult
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
@@ -50,6 +52,10 @@ class ConsoleControlService:
             return self._resume(run_id)
         if action == "release":
             return self._release(run_id)
+        if action == "rerun-tool-checks":
+            return self._rerun_tool_checks(run_id)
+        if action == "rerun-satisfaction":
+            return self._rerun_satisfaction(run_id)
         if action in {"approve", "pause", "stop", "verify", "review"}:
             return self._control(run_id, action)
         raise ConsoleControlError(
@@ -103,6 +109,84 @@ class ConsoleControlService:
                 status=status,
                 message=f"{action} requested by web",
                 next_command=f"coductor status {run_id}",
+            )
+        finally:
+            self.db.release_run_lock(run_id, owner)
+
+    def _rerun_tool_checks(self, run_id: str) -> ConsoleActionResult:
+        row = self._run_context(run_id, "rerun-tool-checks")
+        owner = self._acquire(run_id, "rerun-tool-checks")
+        try:
+            config = load_config(self.root)
+            repo = ArtifactRepository(Path(row["run_dir"]))
+            writer = WorkflowArtifactWriter(self.root, config)
+            results = ToolVerificationService(self.root, config, writer).run_checks(
+                repo,
+                run_id,
+            )
+            now = utc_now()
+            self.db.update_run_status(run_id, row["status"], now)
+            self.db.add_event(
+                run_id,
+                "rerun-tool-checks",
+                f"{len(results)} tool checks rerun by web",
+                now,
+            )
+            return ConsoleActionResult(
+                run_id=run_id,
+                action="rerun-tool-checks",
+                status=row["status"],
+                message="tool checks rerun by web",
+                next_command=f"coductor artifacts {run_id}",
+            )
+        finally:
+            self.db.release_run_lock(run_id, owner)
+
+    def _rerun_satisfaction(self, run_id: str) -> ConsoleActionResult:
+        row = self._run_context(run_id, "rerun-satisfaction")
+        owner = self._acquire(run_id, "rerun-satisfaction")
+        try:
+            config = load_config(self.root)
+            repo = ArtifactRepository(Path(row["run_dir"]))
+            writer = WorkflowArtifactWriter(self.root, config)
+            try:
+                verification_plan = ArtifactEnvelope[VerificationPlanData].model_validate(
+                    repo.read(
+                        "03_verification_plan.yaml",
+                        ArtifactType.VERIFICATION_PLAN,
+                    ).model_dump(mode="json")
+                )
+                gate_report = ArtifactEnvelope[GateReportData].model_validate(
+                    repo.read(
+                        "05_gate_report.yaml",
+                        ArtifactType.GATE_REPORT,
+                    ).model_dump(mode="json")
+                )
+            except (OSError, ValueError) as error:
+                raise ConsoleControlError(
+                    f"cannot rerun goal satisfaction: {error}",
+                    next_command=f"coductor artifacts {run_id}",
+                ) from error
+            report = writer.write_goal_satisfaction(
+                repo,
+                run_id,
+                verification_plan,
+                gate_report,
+            )
+            now = utc_now()
+            self.db.update_run_status(run_id, row["status"], now)
+            self.db.add_event(
+                run_id,
+                "rerun-satisfaction",
+                f"goal satisfaction rerun by web: {report.data.verdict}",
+                now,
+            )
+            return ConsoleActionResult(
+                run_id=run_id,
+                action="rerun-satisfaction",
+                status=row["status"],
+                message=f"goal satisfaction rerun by web: {report.data.verdict}",
+                next_command=f"coductor artifacts {run_id}",
             )
         finally:
             self.db.release_run_lock(run_id, owner)

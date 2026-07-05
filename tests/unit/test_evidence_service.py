@@ -5,6 +5,8 @@ from pathlib import Path
 from coductor.artifacts.models import (
     GateReportData,
     GateResultData,
+    GoalCriterionResult,
+    GoalSatisfactionReportData,
     ReviewReportData,
     WorkerUsage,
 )
@@ -101,6 +103,89 @@ def test_evidence_rejects_placeholder_patch(tmp_path: Path) -> None:
 
     assert evidence.final_status == "human_required"
     assert "patch evidence has no changes" in evidence.validation.errors
+
+
+def test_evidence_rejects_unsatisfied_goal_report(tmp_path: Path) -> None:
+    patch = tmp_path / "tasks/T001/patch.diff"
+    patch.parent.mkdir(parents=True)
+    patch.write_text("diff --git a/file b/file\n", encoding="utf-8")
+
+    evidence = EvidenceService().build(
+        run_dir=tmp_path,
+        goal_title="demo",
+        strategy=ExecutionStrategy.SOLO,
+        gate_report=_gate_report(passed=True),
+        review=_review(blocking_findings=0),
+        completed_tasks=["T001"],
+        goal_satisfaction=GoalSatisfactionReportData(
+            verdict="not_satisfied",
+            criterion_results=[
+                GoalCriterionResult(
+                    criterion_id="AC001",
+                    status="not_satisfied",
+                    missing_evidence=["missing.txt"],
+                    reason="planned evidence is missing",
+                )
+            ],
+            missing_evidence=["missing.txt"],
+            requires_repair=True,
+        ),
+    )
+
+    assert evidence.final_status == "human_required"
+    assert "goal satisfaction is not satisfied" in evidence.validation.errors
+
+
+def test_evidence_acceptance_results_follow_goal_satisfaction_criteria(
+    tmp_path: Path,
+) -> None:
+    patch = tmp_path / "tasks/T001/patch.diff"
+    patch.parent.mkdir(parents=True)
+    patch.write_text("diff --git a/file b/file\n", encoding="utf-8")
+
+    evidence = EvidenceService().build(
+        run_dir=tmp_path,
+        goal_title="demo",
+        strategy=ExecutionStrategy.SOLO,
+        gate_report=_gate_report(passed=True),
+        review=_review(blocking_findings=0),
+        completed_tasks=["T001"],
+        goal_satisfaction=GoalSatisfactionReportData(
+            verdict="uncertain",
+            criterion_results=[
+                GoalCriterionResult(
+                    criterion_id="AC001",
+                    status="satisfied",
+                    evidence=["05_gate_report.yaml"],
+                    reason="required quality gates passed",
+                ),
+                GoalCriterionResult(
+                    criterion_id="AC002",
+                    status="not_satisfied",
+                    evidence=[],
+                    missing_evidence=["tool_runs/example/tool_result.yaml"],
+                    reason="planned evidence is missing",
+                ),
+                GoalCriterionResult(
+                    criterion_id="AC003",
+                    status="uncertain",
+                    evidence=[],
+                    reason="manual verification is required",
+                ),
+            ],
+            missing_evidence=["tool_runs/example/tool_result.yaml"],
+            requires_human=True,
+        ),
+    )
+
+    assert [
+        (item.criterion_id, item.status, item.evidence)
+        for item in evidence.acceptance_results
+    ] == [
+        ("AC001", "passed", ["05_gate_report.yaml"]),
+        ("AC002", "failed", []),
+        ("AC003", "manual", []),
+    ]
 
 
 def test_evidence_summarizes_worker_and_review_usage(tmp_path: Path) -> None:

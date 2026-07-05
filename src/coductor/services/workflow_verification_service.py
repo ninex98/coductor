@@ -12,6 +12,7 @@ from coductor.domain.enums import ArtifactStatus, ArtifactType, ProducerKind
 from coductor.gates.models import QualityGate
 from coductor.gates.runner import GateRunner
 from coductor.repository.merge import build_integration_data
+from coductor.services.tool_verification_service import ToolVerificationService
 from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 
 
@@ -79,4 +80,8 @@ class WorkflowVerificationService:
             data=data,
         )
         repo.write("05_gate_report.yaml", envelope)
+        ToolVerificationService(self.root, self.config, self.artifacts).run_checks(
+            repo,
+            run_id,
+        )
         return envelope

@@ -7,9 +7,10 @@ from pathlib import Path
 
 from coductor.backends.base import WorkerHandle, WorkerRequest, WorkerResult
 from coductor.backends.fake import FakeCodingBackend
-from coductor.config.models import CoductorConfig, QualityGateConfig
+from coductor.config.models import CoductorConfig, QualityGateConfig, ToolCheckConfig
 from coductor.domain.enums import RunStatus, WorkerStatus
 from coductor.services.run_service import RunService
+from coductor.workflow.artifact_writer import WorkflowArtifactWriter
 from coductor.workflow.graph_runner import WorkflowGraphRunner
 from coductor.workflow.langgraph_checkpoint import langgraph_thread_config
 from coductor.workflow.state import WorkflowState
@@ -283,6 +284,134 @@ def test_run_service_uses_contextual_graph_for_front_half(
 
     assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
     assert (Path(result.run_dir) / "03_execution_plan.yaml").exists()
+
+
+def test_run_requires_human_when_goal_satisfaction_missing_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = _config(f"{sys.executable} -c 'print(1)'")
+    original = WorkflowArtifactWriter.write_verification_plan
+
+    def write_plan_with_missing_goal_evidence(self, repo, run_id, spec):
+        envelope = original(self, repo, run_id, spec)
+        envelope.data.items[0].evidence_paths = ["missing/goal-evidence.txt"]
+        return repo.write_next_revision("03_verification_plan.yaml", envelope)
+
+    monkeypatch.setattr(
+        WorkflowArtifactWriter,
+        "write_verification_plan",
+        write_plan_with_missing_goal_evidence,
+    )
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run(
+        "修复示例函数并补充测试"
+    )
+
+    run_dir = Path(result.run_dir)
+    satisfaction = (run_dir / "07_goal_satisfaction.yaml").read_text(encoding="utf-8")
+    evidence = (run_dir / "07_evidence.yaml").read_text(encoding="utf-8")
+
+    assert result.status == RunStatus.HUMAN_REQUIRED
+    assert "not_satisfied" in satisfaction
+    assert "goal satisfaction is not satisfied" in evidence
+
+
+def test_goal_satisfaction_failure_repairs_and_rechecks(tmp_path: Path, monkeypatch) -> None:
+    config = _config(f"{sys.executable} -c 'print(1)'")
+    original = WorkflowArtifactWriter.write_verification_plan
+
+    def write_plan_requiring_repair_result(self, repo, run_id, spec):
+        envelope = original(self, repo, run_id, spec)
+        envelope.data.items[0].evidence_paths = ["repairs/R001/repair_result.yaml"]
+        return repo.write_next_revision("03_verification_plan.yaml", envelope)
+
+    monkeypatch.setattr(
+        WorkflowArtifactWriter,
+        "write_verification_plan",
+        write_plan_requiring_repair_result,
+    )
+    backend = FakeCodingBackend()
+
+    result = RunService(tmp_path, config, backend=backend).run(
+        "修复示例函数并补充测试"
+    )
+
+    run_dir = Path(result.run_dir)
+    repair_request = (run_dir / "repairs/R001/repair_request.yaml").read_text(
+        encoding="utf-8"
+    )
+    satisfaction = (run_dir / "07_goal_satisfaction.yaml").read_text(encoding="utf-8")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result.repair_attempts == 1
+    assert "reason: goal_not_satisfied" in repair_request
+    assert "repairs/R001/repair_result.yaml" in satisfaction
+    assert "verdict: satisfied" in satisfaction
+
+
+def test_tool_check_failure_repairs_and_rechecks(tmp_path: Path) -> None:
+    marker = tmp_path / "tool-marker"
+    config = _config(f"{sys.executable} -c 'print(1)'")
+    config.tool_checks = [
+        ToolCheckConfig(
+            id="browser-smoke",
+            tool="browser",
+            command=(
+                f'{sys.executable} -c "from pathlib import Path; import sys; '
+                f"p=Path({str(marker)!r}); "
+                'sys.exit(0 if p.exists() else 1)"'
+            ),
+            timeout_seconds=30,
+        )
+    ]
+    backend = FakeCodingBackend(
+        repair_side_effect=lambda: marker.write_text("fixed", encoding="utf-8")
+    )
+
+    result = RunService(tmp_path, config, backend=backend).run(
+        "修复网页按钮并用浏览器冒烟验证"
+    )
+
+    run_dir = Path(result.run_dir)
+    satisfaction = (run_dir / "07_goal_satisfaction.yaml").read_text(encoding="utf-8")
+    evidence = (run_dir / "07_evidence.yaml").read_text(encoding="utf-8")
+
+    assert result.status == RunStatus.READY_FOR_HUMAN_REVIEW
+    assert result.repair_attempts == 1
+    assert (run_dir / "tool_runs/browser-smoke/tool_request.yaml").exists()
+    assert (run_dir / "tool_runs/browser-smoke/tool_result.yaml").exists()
+    assert "verdict: satisfied" in satisfaction
+    assert "tool_runs/browser-smoke/tool_result.yaml" in evidence
+
+
+def test_missing_image_backend_produces_actionable_human_required(tmp_path: Path) -> None:
+    config = _config(f"{sys.executable} -c 'print(1)'")
+
+    result = RunService(tmp_path, config, backend=FakeCodingBackend()).run(
+        "为首页生成一张产品背景图片，并接入页面"
+    )
+
+    run_dir = Path(result.run_dir)
+    request = (run_dir / "tool_runs/image_asset_ac002/tool_request.yaml").read_text(
+        encoding="utf-8"
+    )
+    tool_result = (run_dir / "tool_runs/image_asset_ac002/tool_result.yaml").read_text(
+        encoding="utf-8"
+    )
+    stderr = (run_dir / "tool_runs/image_asset_ac002/stderr.log").read_text(
+        encoding="utf-8"
+    )
+    satisfaction = (run_dir / "07_goal_satisfaction.yaml").read_text(encoding="utf-8")
+    evidence = (run_dir / "07_evidence.yaml").read_text(encoding="utf-8")
+
+    assert result.status == RunStatus.HUMAN_REQUIRED
+    assert result.repair_attempts == 0
+    assert "candidate_count: 1" in request
+    assert "requires_human: true" in tool_result
+    assert "image generation backend unavailable" in stderr
+    assert "verdict: uncertain" in satisfaction
+    assert "goal satisfaction is not satisfied" in evidence
 
 
 def test_run_service_uses_contextual_graph_for_no_gate_happy_path(

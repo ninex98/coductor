@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from coductor.artifacts.hashing import file_sha256
 from coductor.artifacts.models import (
@@ -12,6 +13,8 @@ from coductor.artifacts.models import (
     EvidenceValidation,
     GateReportData,
     GateSummary,
+    GoalSatisfactionReportData,
+    GoalSatisfactionSummary,
     PullRequestInfo,
     ReviewReportData,
     ReviewSummary,
@@ -30,6 +33,8 @@ class EvidenceCompletenessValidator:
             errors.append("required gates failed")
         if evidence.review_summary.blocking_findings > 0:
             errors.append("blocking review findings exist")
+        if evidence.goal_satisfaction.verdict != "satisfied":
+            errors.append("goal satisfaction is not satisfied")
         if not any(item.type == "patch" for item in evidence.evidence_files):
             errors.append("missing patch evidence")
         if any(item.type == "invalid_patch" for item in evidence.evidence_files):
@@ -47,6 +52,7 @@ class EvidenceService:
         gate_report: GateReportData,
         review: ReviewReportData,
         completed_tasks: list[str],
+        goal_satisfaction: GoalSatisfactionReportData | None = None,
     ) -> EvidenceBundleData:
         required = [gate for gate in gate_report.gates if gate.required]
         passed = [gate for gate in required if gate.status == "passed"]
@@ -65,6 +71,22 @@ class EvidenceService:
                     sha256=file_sha256(patch_path),
                 )
             )
+        for tool_result_path in sorted((run_dir / "tool_runs").glob("*/tool_result.yaml")):
+            evidence_files.append(
+                EvidenceFile(
+                    type="tool_result",
+                    path=tool_result_path.relative_to(run_dir).as_posix(),
+                    sha256=file_sha256(tool_result_path),
+                )
+            )
+            for artifact_path in _tool_result_artifacts(run_dir, tool_result_path):
+                evidence_files.append(
+                    EvidenceFile(
+                        type=_tool_artifact_type(artifact_path),
+                        path=artifact_path.relative_to(run_dir).as_posix(),
+                        sha256=file_sha256(artifact_path),
+                    )
+                )
         evidence = EvidenceBundleData(
             goal_title=goal_title,
             final_status="ready_for_human_review",
@@ -72,20 +94,18 @@ class EvidenceService:
             base_commit=gate_report.base_commit,
             head_commit=gate_report.head_commit,
             completed_tasks=completed_tasks,
-            acceptance_results=gate_report.acceptance_coverage
-            or [
-                AcceptanceCoverage(
-                    criterion_id="AC001",
-                    status="passed" if not failed else "failed",
-                    evidence=["05_gate_report.yaml"],
-                )
-            ],
+            acceptance_results=_acceptance_results(
+                gate_report,
+                goal_satisfaction,
+                failed=bool(failed),
+            ),
             gate_summary=GateSummary(
                 required=len(required),
                 passed=len(passed),
                 failed=len(failed),
             ),
             review_summary=ReviewSummary(blocking_findings=review.blocking_findings),
+            goal_satisfaction=_goal_satisfaction_summary(goal_satisfaction),
             usage_summary=usage_summary,
             evidence_files=evidence_files,
             known_risks=[] if not failed else ["存在未通过的必需质量门"],
@@ -141,6 +161,16 @@ class EvidenceService:
         if evidence.validation.errors:
             lines.extend(["", "## Evidence Validation"])
             lines.extend(f"- {error}" for error in evidence.validation.errors)
+        lines.extend(
+            [
+                "",
+                "## Goal Satisfaction",
+                f"- Verdict: {evidence.goal_satisfaction.verdict}",
+                f"- Satisfied criteria: {evidence.goal_satisfaction.satisfied}",
+                f"- Not satisfied criteria: {evidence.goal_satisfaction.not_satisfied}",
+                f"- Uncertain criteria: {evidence.goal_satisfaction.uncertain}",
+            ]
+        )
         report.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return report
 
@@ -155,6 +185,57 @@ def _patch_has_changes(path: Path) -> bool:
     )
 
 
+def _goal_satisfaction_summary(
+    report: GoalSatisfactionReportData | None,
+) -> GoalSatisfactionSummary:
+    if report is None:
+        return GoalSatisfactionSummary(verdict="satisfied")
+    return GoalSatisfactionSummary(
+        verdict=report.verdict,
+        satisfied=sum(
+            1 for result in report.criterion_results if result.status == "satisfied"
+        ),
+        not_satisfied=sum(
+            1 for result in report.criterion_results if result.status == "not_satisfied"
+        ),
+        uncertain=sum(
+            1 for result in report.criterion_results if result.status == "uncertain"
+        ),
+    )
+
+
+def _acceptance_results(
+    gate_report: GateReportData,
+    goal_satisfaction: GoalSatisfactionReportData | None,
+    *,
+    failed: bool,
+) -> list[AcceptanceCoverage]:
+    if goal_satisfaction is not None:
+        return [
+            AcceptanceCoverage(
+                criterion_id=result.criterion_id,
+                status=_goal_result_to_acceptance_status(result.status),
+                evidence=result.evidence,
+            )
+            for result in goal_satisfaction.criterion_results
+        ]
+    return gate_report.acceptance_coverage or [
+        AcceptanceCoverage(
+            criterion_id="AC001",
+            status="passed" if not failed else "failed",
+            evidence=["05_gate_report.yaml"],
+        )
+    ]
+
+
+def _goal_result_to_acceptance_status(status: str) -> Literal["passed", "failed", "manual"]:
+    if status == "satisfied":
+        return "passed"
+    if status == "uncertain":
+        return "manual"
+    return "failed"
+
+
 def _artifact_usages(run_dir: Path) -> list[WorkerUsage]:
     paths = [
         *sorted((run_dir / "tasks").glob("*/worker_result.yaml")),
@@ -165,6 +246,44 @@ def _artifact_usages(run_dir: Path) -> list[WorkerUsage]:
         if usage := _usage_from_artifact(path):
             usages.append(usage)
     return usages
+
+
+def _tool_result_artifacts(run_dir: Path, result_path: Path) -> list[Path]:
+    payload = load_yaml(result_path.read_text(encoding="utf-8"))
+    data = payload.get("data", {})
+    if not isinstance(data, dict):
+        return []
+    artifacts = data.get("artifacts")
+    if not isinstance(artifacts, list):
+        return []
+    paths: list[Path] = []
+    for value in artifacts:
+        if not isinstance(value, str):
+            continue
+        path = (run_dir / value).resolve()
+        try:
+            path.relative_to(run_dir.resolve())
+        except ValueError:
+            continue
+        if path.exists() and path.is_file():
+            paths.append(path)
+    return paths
+
+
+def _tool_artifact_type(path: Path) -> str:
+    name = path.name
+    suffix = path.suffix.lower()
+    if name == "image_asset_request.json":
+        return "image_asset_request"
+    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+        return "image_asset"
+    if "screenshot" in name:
+        return "tool_screenshot"
+    if "console" in name:
+        return "tool_console"
+    if "summary" in name:
+        return "tool_summary"
+    return "tool_artifact"
 
 
 def _usage_from_artifact(path: Path) -> WorkerUsage | None:

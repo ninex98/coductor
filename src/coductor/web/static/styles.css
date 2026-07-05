@@ -171,10 +171,24 @@ button {
   color: var(--warn);
 }
 
+.status-pill.satisfied,
+.status-pill.passed {
+  background: #dff1e6;
+  color: #1d6438;
+}
+
+.status-pill.not_satisfied,
 .status-pill.failed,
 .status-pill.stopped {
   background: #f7dddd;
   color: var(--danger);
+}
+
+.status-pill.uncertain,
+.status-pill.skipped,
+.status-pill.timeout {
+  background: #f9ead2;
+  color: var(--warn);
 }
 
 .workspace-panel {
@@ -398,6 +412,74 @@ button {
   overflow-wrap: anywhere;
 }
 
+.criteria-list,
+.tool-list {
+  display: grid;
+  gap: 10px;
+}
+
+.criterion-row,
+.tool-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) auto minmax(130px, 0.5fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.criterion-row > div:first-child,
+.tool-row > div:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.criterion-row strong,
+.tool-row strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.criterion-row span,
+.tool-row span,
+.criterion-row small,
+.tool-row small {
+  overflow-wrap: anywhere;
+}
+
+.criterion-meta {
+  display: grid;
+  gap: 5px;
+  justify-items: start;
+}
+
+.criterion-paths {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.criterion-paths code {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f3f7fb;
+  color: var(--ink);
+  padding: 5px 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.muted-inline {
+  color: var(--muted);
+}
+
 .preview-card pre {
   max-height: 420px;
   margin: 0;
@@ -455,6 +537,11 @@ button {
   }
 
   .metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .criterion-row,
+  .tool-row {
     grid-template-columns: 1fr;
   }
 }

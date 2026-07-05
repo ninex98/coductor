@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from coductor.artifacts.models import ArtifactEnvelope, GateReportData
+from coductor.artifacts.models import ArtifactEnvelope, GateReportData, GoalSatisfactionReportData
 from coductor.backends.base import WorkerHandle
 from coductor.services.repair_service import RepairService
 from coductor.workflow.runtime import WorkflowRuntimeContext
@@ -19,6 +19,7 @@ def repair_failure_node(
     gate_report: ArtifactEnvelope[GateReportData] | None = None,
     repair: RepairService | None = None,
     target_task_id: str | None = None,
+    goal_satisfaction: ArtifactEnvelope[GoalSatisfactionReportData] | None = None,
 ) -> dict[str, Any]:
     if context is not None:
         if (
@@ -48,6 +49,8 @@ def repair_failure_node(
                     },
                 }
         state.repair_attempts += 1
+        if _is_goal_satisfaction_repair(state, goal_satisfaction):
+            state.satisfaction_repair_attempts += 1
         state.current_stage = "repair_failure"
         context.save(state)
         repair.repair(
@@ -57,6 +60,12 @@ def repair_failure_node(
             gate_report,
             state.repair_attempts,
             target_task_id,
+            reason=(
+                "goal_not_satisfied"
+                if _is_goal_satisfaction_repair(state, goal_satisfaction)
+                else "gate_failure"
+            ),
+            goal_satisfaction=goal_satisfaction,
         )
         repair_id = f"R{state.repair_attempts:03d}"
         state.artifacts[f"repair_request_{repair_id}"] = (
@@ -67,7 +76,7 @@ def repair_failure_node(
         )
         state.current_stage = "run_quality_gates"
         context.save(state)
-        return {
+        patch: dict[str, Any] = {
             "current_stage": "run_quality_gates",
             "repair_attempts": state.repair_attempts,
             "artifacts": {
@@ -75,8 +84,22 @@ def repair_failure_node(
                 f"repair_result_{repair_id}": f"repairs/{repair_id}/repair_result.yaml",
             },
         }
+        if state.satisfaction_repair_attempts:
+            patch["satisfaction_repair_attempts"] = state.satisfaction_repair_attempts
+        return patch
     return {
         "current_stage": "repair_failure",
         "repair_attempts": state.repair_attempts + 1,
         "gate_passed": True,
     }
+
+
+def _is_goal_satisfaction_repair(
+    state: WorkflowState,
+    goal_satisfaction: ArtifactEnvelope[GoalSatisfactionReportData] | None,
+) -> bool:
+    return (
+        goal_satisfaction is not None
+        and goal_satisfaction.data.verdict != "satisfied"
+        and state.gate_passed
+    )

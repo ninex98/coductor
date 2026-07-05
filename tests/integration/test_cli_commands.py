@@ -986,10 +986,13 @@ def test_cli_doctor_reports_backend_diagnostics(
     assert "codex_exec_bin:" in result.output
     assert "codex_sdk_available:" in result.output
     assert "backend_available: true" in result.output
+    assert "backend_implemented: true" in result.output
+    assert "backend_stability: stable" in result.output
     assert "backend_resume_thread:" in result.output
     assert "backend_streaming_logs:" in result.output
     assert "backend_cancel:" in result.output
     assert "backend_usage:" in result.output
+    assert "backend_notes:" in result.output
 
 
 def test_cli_doctor_reports_effective_backend_when_sdk_falls_back(
@@ -1018,6 +1021,7 @@ def test_cli_doctor_reports_effective_backend_when_sdk_falls_back(
     assert "backend_provider: codex_sdk" in result.output
     assert "backend_effective_provider: codex_exec" in result.output
     assert "backend_available: true" in result.output
+    assert "backend_implemented: true" in result.output
 
 
 def test_cli_pause_rejects_completed_run_without_changing_status(

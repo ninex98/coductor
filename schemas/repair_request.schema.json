@@ -62,15 +62,19 @@
         "goal",
         "repository_snapshot",
         "specification",
+        "verification_plan",
         "execution_plan",
         "task",
         "worker_request",
         "worker_result",
         "integration",
         "gate_report",
+        "tool_request",
+        "tool_result",
         "repair_request",
         "repair_result",
         "review_report",
+        "goal_satisfaction_report",
         "evidence_bundle",
         "release_manifest"
       ],
@@ -155,6 +159,42 @@
         "max_attempts": {
           "title": "Max Attempts",
           "type": "integer"
+        },
+        "missing_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Criteria",
+          "type": "array"
+        },
+        "missing_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "default": "gate_failure",
+          "enum": [
+            "gate_failure",
+            "goal_not_satisfied",
+            "missing_evidence"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "recommended_action": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recommended Action"
         },
         "repair_id": {
           "title": "Repair Id",

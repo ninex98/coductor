@@ -22,6 +22,11 @@ SUCCESS_STAGE_ARTIFACTS = [
         ArtifactType.REPOSITORY_SNAPSHOT,
     ),
     StageArtifact("draft_spec", "02_spec.yaml", ArtifactType.SPECIFICATION),
+    StageArtifact(
+        "create_verification_plan",
+        "03_verification_plan.yaml",
+        ArtifactType.VERIFICATION_PLAN,
+    ),
     StageArtifact("create_execution_plan", "03_execution_plan.yaml", ArtifactType.EXECUTION_PLAN),
     StageArtifact("materialize_tasks", "tasks/{task_id}/task.yaml", ArtifactType.TASK),
     StageArtifact(
@@ -36,12 +41,30 @@ SUCCESS_STAGE_ARTIFACTS = [
     ),
     StageArtifact("integrate_changes", "04_integration.yaml", ArtifactType.INTEGRATION),
     StageArtifact("run_quality_gates", "05_gate_report.yaml", ArtifactType.GATE_REPORT),
+    StageArtifact(
+        "evaluate_goal_satisfaction",
+        "07_goal_satisfaction.yaml",
+        ArtifactType.GOAL_SATISFACTION_REPORT,
+    ),
     StageArtifact("run_independent_review", "06_review.yaml", ArtifactType.REVIEW_REPORT),
     StageArtifact("prepare_evidence", "07_evidence.yaml", ArtifactType.EVIDENCE_BUNDLE),
 ]
 
 CONTROL_STAGE_ARTIFACTS = [
     StageArtifact("prepare_release", "08_release_manifest.yaml", ArtifactType.RELEASE_MANIFEST),
+]
+
+TOOL_STAGE_ARTIFACTS = [
+    StageArtifact(
+        "run_tool_checks",
+        "tool_runs/{tool_run_id}/tool_request.yaml",
+        ArtifactType.TOOL_REQUEST,
+    ),
+    StageArtifact(
+        "run_tool_checks",
+        "tool_runs/{tool_run_id}/tool_result.yaml",
+        ArtifactType.TOOL_RESULT,
+    ),
 ]
 
 REPAIR_STAGE_ARTIFACTS = [
@@ -61,6 +84,7 @@ FAILURE_STOPS_BEFORE = {
     "worker_failed": [
         "04_integration.yaml",
         "05_gate_report.yaml",
+        "07_goal_satisfaction.yaml",
         "06_review.yaml",
         "07_evidence.yaml",
     ],

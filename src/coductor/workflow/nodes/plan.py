@@ -33,6 +33,10 @@ def create_execution_plan_node(
             }
         if spec is None or snapshot is None:
             raise ValueError("create_execution_plan_node requires spec and snapshot artifacts")
+        verification_path = "03_verification_plan.yaml"
+        if not (context.repo.root / verification_path).exists():
+            context.artifacts.write_verification_plan(context.repo, state.run_id, spec)
+            state.artifacts["03_verification_plan"] = verification_path
         plan_path = "03_execution_plan.yaml"
         if (context.repo.root / plan_path).exists():
             plan = ArtifactEnvelope[ExecutionPlanData].model_validate(

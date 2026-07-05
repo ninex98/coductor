@@ -1,0 +1,111 @@
+schema_version: "1.0"
+artifact_type: coductor_product_summary
+artifact_id: summary_coductor_current_role_20260705
+status: accepted
+created_at: "2026-07-05T21:56:37+08:00"
+producer:
+  kind: assistant
+  name: codex
+inputs:
+  - artifact_type: coductor_implementation_plan
+    path: "docs/superpowers/plans/2026-07-05-goal-satisfaction-loop.yaml"
+    status: validated
+  - artifact_type: coductor_validation_report
+    path: "docs/superpowers/plans/2026-07-05-dogfood-goal-loop-validation.yaml"
+    status: passed
+data:
+  title: "Coductor 当前作用与方向总结"
+  short_answer: >
+    Coductor 当前不应该被理解为“比直接 Codex 更聪明的代码生成器”，
+    而应该理解为“给 Codex run 加上目标拆解、证据验证、有限修复循环、
+    可恢复状态和人工交接边界的控制层”。
+  main_value:
+    - id: V001
+      name: "目标变成验收标准"
+      explanation: >
+        用户目标会被写入 00_goal.yaml 和 02_spec.yaml，并进一步拆成
+        03_verification_plan.yaml。直接用 Codex 时，这些目标通常停留在对话上下文中。
+    - id: V002
+      name: "验证不再只等于跑测试"
+      explanation: >
+        质量门、工具验证、浏览器验证、生图请求和人工确认都会进入
+        tool_request/tool_result 或 goal_satisfaction artifact。测试通过但目标没满足时，
+        最终仍应进入 human_required 或修复循环。
+    - id: V003
+      name: "不满足目标时可以有限自动修复"
+      explanation: >
+        goal_satisfaction 为 not_satisfied 时，会生成 repair_request，
+        把缺失 criteria、缺失 evidence、推荐动作和失败证据交给修复阶段。
+        默认修复循环有边界，避免无限运行。
+    - id: V004
+      name: "完成状态由 Evidence Bundle 决定"
+      explanation: >
+        Agent 不能靠一句“完成了”决定状态。ready_for_human_review 需要
+        gate、goal_satisfaction、review、patch/tool evidence 和 validation 同时满足。
+    - id: V005
+      name: "Web Console 解释为什么完成或没完成"
+      explanation: >
+        Goal Loop 面板展示 verdict、每条 criterion 的 evidence、工具检查结果、
+        repair 次数和缺口，用户不用直接翻 YAML 也能理解当前状态。
+  current_user_flow:
+    - step: "coductor run <goal>"
+      result: "创建 run，生成 goal/spec/verification_plan/execution_plan/tasks"
+    - step: "worker 执行"
+      result: "生成 worker_result、patch.diff，并按配置运行质量门和工具检查"
+    - step: "goal_satisfaction"
+      result: "判断每条验收标准是否 satisfied/not_satisfied/uncertain"
+    - step: "repair loop"
+      result: "若目标未满足，在边界内补实现、补测试或补证据；无法证明则 human_required"
+    - step: "review/evidence"
+      result: "独立审查后写 Evidence Bundle，Evidence Bundle 是最终状态事实源"
+    - step: "web console"
+      result: "查看 artifact、日志、Evidence、Goal Loop、Doctor 和安全控制动作"
+  why_it_may_not_feel_better_than_codex_yet:
+    - reason: "如果目标很简单，Codex 直接改代码的体感路径更短"
+    - reason: "当前 spec/criteria 仍偏规则化，复杂需求的语义拆解还不够聪明"
+    - reason: "真实后端主要仍是 codex_exec，缺少 durable thread resume、真实 token usage、cancel 等高级能力"
+    - reason: "浏览器和生图能力已接入 artifact contract，但很多真实场景还需要更强的项目级验证策略"
+    - reason: "当前价值更多体现在可审计、可恢复、可解释，而不是单轮生成速度"
+  validated_capabilities:
+    - "03_verification_plan.yaml 生成并映射 acceptance criteria 到 gates/tool checks"
+    - "07_goal_satisfaction.yaml 独立判断目标满足度"
+    - "tool_runs/*/tool_request.yaml 和 tool_result.yaml 记录工具验证请求与结果"
+    - "浏览器 smoke runner 可生成截图、console log、summary 等 evidence"
+    - "图片需求默认单张候选，缺少生图 backend 时进入 actionable human_required"
+    - "repair_request 支持 goal_not_satisfied、missing_criteria、missing_evidence 和 recommended_action"
+    - "resume 会校验 tool artifact 和 evidence file hash，过期证据会 human_required"
+    - "Web Console Goal Loop 可展示 criteria、tool evidence 和修复状态"
+    - "Doctor 明确展示 effective backend、implemented、stability 和能力限制"
+  current_limitations:
+    - id: L001
+      item: "Goal satisfaction 初版偏规则判断"
+      impact: "复杂产品目标仍可能需要模型 reviewer 或更强的领域验证器辅助判断"
+    - id: L002
+      item: "codex_sdk backend 未真实实现"
+      impact: "真实执行仍以 codex_exec 为主，不支持 durable resume/cancel/real usage"
+    - id: L003
+      item: "工具验证策略仍需要按项目配置增强"
+      impact: "默认自动发现只能覆盖一部分 Web/Node 场景，复杂前端需要更多 selectors、文本和截图检查"
+    - id: L004
+      item: "artifact 编号存在兼容性命名"
+      impact: "当前实现保留旧 run 兼容，计划中的 00-10 编号和现有 07_evidence 等文件名还未完全重排"
+    - id: L005
+      item: "Web Console 是展示和控制面，不是事实源"
+      impact: "正式交接仍必须以 YAML Artifact 为准，UI 只做投影"
+  recommendation:
+    product_direction: "继续走 Verified Codex Runs，而不是包装一个更复杂的聊天入口"
+    near_term_focus:
+      - "把 spec/verification_plan 的生成质量做强，让目标拆解更贴近真实需求"
+      - "为典型前端项目补一套可配置浏览器验证模板"
+      - "把 human_required 的原因在 CLI/Web 中做得更短、更具体"
+      - "增加一个真实项目 dogfood，用当前工作区外的小型 Web app 验证浏览器路径"
+    stop_doing:
+      - "不要把所有能力都做成并发 agent，默认继续 Solo First"
+      - "不要把自由文本总结作为下游决策依据"
+      - "不要默认批量生图或默认启用远程/生产/Secrets 能力"
+  decision:
+    status: "direction_is_validated"
+    confidence: medium_high
+    rationale: >
+      dogfood 已证明闭环 artifact 可以支撑 ready_for_human_review 的解释；
+      但真实复杂项目的价值还取决于验收标准生成质量和项目级工具验证模板。

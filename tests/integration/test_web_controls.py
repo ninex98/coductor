@@ -5,12 +5,15 @@ from pathlib import Path
 from coductor.artifacts.models import (
     ArtifactEnvelope,
     EvidenceBundleData,
+    GateReportData,
     GateSummary,
     GoalData,
     Producer,
     PullRequestInfo,
     ReviewSummary,
     Rollback,
+    VerificationPlanData,
+    VerificationPlanItem,
 )
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.domain.enums import (
@@ -19,6 +22,7 @@ from coductor.domain.enums import (
     ExecutionMode,
     ExecutionStrategy,
     ProducerKind,
+    VerificationType,
 )
 from coductor.services.evidence_service import EvidenceCompletenessValidator
 from coductor.storage.database import Database
@@ -103,6 +107,56 @@ def _seed_ready_release_run(root: Path) -> Path:
     return run_dir
 
 
+def _seed_satisfaction_inputs(root: Path) -> Path:
+    run_dir = _seed_basic_run(root, status="human_required")
+    repo = ArtifactRepository(run_dir)
+    repo.write(
+        "03_verification_plan.yaml",
+        ArtifactEnvelope[VerificationPlanData](
+            artifact_type=ArtifactType.VERIFICATION_PLAN,
+            artifact_id="art_verification_plan_abc",
+            run_id="run_abc",
+            revision=1,
+            status=ArtifactStatus.READY,
+            created_at="2026-06-24T00:00:03Z",
+            producer=Producer(kind=ProducerKind.SYSTEM, name="verification-planner"),
+            inputs=[],
+            data=VerificationPlanData(
+                items=[
+                    VerificationPlanItem(
+                        id="VP001",
+                        criterion_id="AC001",
+                        description="质量门通过",
+                        verification=VerificationType.AUTOMATED,
+                        tool="quality_gate",
+                        evidence_paths=["05_gate_report.yaml"],
+                    )
+                ]
+            ),
+        ),
+    )
+    repo.write(
+        "05_gate_report.yaml",
+        ArtifactEnvelope[GateReportData](
+            artifact_type=ArtifactType.GATE_REPORT,
+            artifact_id="art_gate_report_abc",
+            run_id="run_abc",
+            revision=1,
+            status=ArtifactStatus.PASSED,
+            created_at="2026-06-24T00:00:04Z",
+            producer=Producer(kind=ProducerKind.TOOL, name="gate-runner"),
+            inputs=[],
+            data=GateReportData(
+                base_commit="base",
+                head_commit="head",
+                required_gates_passed=True,
+                next_action="review",
+            ),
+        ),
+    )
+    return run_dir
+
+
 def test_web_action_pause_updates_status(tmp_path: Path, monkeypatch) -> None:
     _seed_basic_run(tmp_path, status="running")
     monkeypatch.chdir(tmp_path)
@@ -173,6 +227,62 @@ def test_web_action_allows_repeat_after_rate_limit_window(
 
     assert first.status == 200
     assert second.status == 200
+
+
+def test_web_action_rerun_satisfaction_writes_goal_report(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _seed_satisfaction_inputs(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+
+    response = app.handle(
+        "POST",
+        "/api/runs/run_abc/actions/rerun-satisfaction",
+        headers=_action_headers(),
+    )
+
+    assert response.status == 200
+    assert "satisfied" in response.body["data"]["message"]
+    assert (run_dir / "07_goal_satisfaction.yaml").exists()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    events = db.list_events("run_abc")
+    assert events[-1]["stage"] == "rerun-satisfaction"
+
+
+def test_web_action_rerun_tool_checks_writes_tool_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _seed_basic_run(tmp_path, status="human_required")
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(
+            [
+                'schema_version: "1.0"',
+                "tool_checks:",
+                "  - id: smoke_command",
+                "    tool: command",
+                "    command: /bin/echo ok",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    app = _app(tmp_path)
+
+    response = app.handle(
+        "POST",
+        "/api/runs/run_abc/actions/rerun-tool-checks",
+        headers=_action_headers(),
+    )
+
+    assert response.status == 200
+    assert (run_dir / "tool_runs" / "smoke_command" / "tool_result.yaml").exists()
+    db = Database(tmp_path / ".coductor" / "coductor.sqlite3")
+    events = db.list_events("run_abc")
+    assert events[-1]["stage"] == "rerun-tool-checks"
 
 
 def test_web_action_rejects_locked_run_without_side_effects(tmp_path: Path, monkeypatch) -> None:

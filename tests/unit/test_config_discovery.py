@@ -31,6 +31,30 @@ def test_discover_config_uses_package_manager_and_typecheck_scripts(tmp_path) ->
         "node_typecheck": "pnpm run typecheck",
         "node_build": "pnpm run build",
     }
+    assert len(config.tool_checks) == 0
+
+
+def test_discover_config_adds_browser_smoke_for_ui_scripts(tmp_path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "dev": "vite --host 127.0.0.1 --port 3000",
+                    "build": "vite build",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = discover_config(tmp_path)
+
+    assert len(config.tool_checks) == 1
+    check = config.tool_checks[0]
+    assert check.id == "browser_smoke"
+    assert check.tool == "browser"
+    assert check.browser.start_command == "npm run dev"
+    assert check.browser.url == "http://127.0.0.1:3000"
 
 
 def test_discover_config_python_project_uses_configured_python_gates(tmp_path) -> None:
@@ -83,3 +107,4 @@ def test_discover_config_empty_project_has_no_quality_gates(tmp_path) -> None:
     config = discover_config(tmp_path)
 
     assert config.quality_gates == []
+    assert config.tool_checks == []

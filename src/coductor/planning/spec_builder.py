@@ -23,6 +23,10 @@ def build_acceptance_criteria(raw_goal: str) -> list[AcceptanceCriterion]:
         ("evidence", "evidence bundle 只在质量门、review 和 patch 证据均可信时 ready"),
         ("测试", "新增或更新自动化测试覆盖本次行为变更"),
         ("test", "新增或更新自动化测试覆盖本次行为变更"),
+        ("图片", "需要的图片资产已生成或明确进入人工生图，并记录用途、尺寸、prompt 和证据路径"),
+        ("图像", "需要的图片资产已生成或明确进入人工生图，并记录用途、尺寸、prompt 和证据路径"),
+        ("image", "需要的图片资产已生成或明确进入人工生图，并记录用途、尺寸、prompt 和证据路径"),
+        ("asset", "需要的图片资产已生成或明确进入人工生图，并记录用途、尺寸、prompt 和证据路径"),
     ]:
         if marker in normalized:
             criteria.append(
@@ -48,6 +52,8 @@ def derive_in_scope(raw_goal: str) -> list[str]:
         scope.append("更新 Evidence Bundle 完整性判断")
     if "测试" in normalized or "test" in normalized:
         scope.append("补充或运行相关自动化验证")
+    if _mentions_image_asset(normalized):
+        scope.append("生成或接入目标所需图片资产，并留下可追踪证据")
     return scope
 
 
@@ -60,6 +66,9 @@ def derive_allowed_paths(raw_goal: str, snapshot: RepositorySnapshotData) -> lis
         paths.append("README.md")
     if "示例" in normalized or "example" in normalized:
         paths.append("examples/**")
+    if _mentions_image_asset(normalized):
+        paths.append("assets/**")
+        paths.append("public/**")
     return paths
 
 
@@ -80,3 +89,10 @@ def _dedupe_criteria(criteria: list[AcceptanceCriterion]) -> list[AcceptanceCrit
         criterion.model_copy(update={"id": f"AC{index:03d}"})
         for index, criterion in enumerate(deduped, start=1)
     ]
+
+
+def _mentions_image_asset(normalized_goal: str) -> bool:
+    return any(
+        marker in normalized_goal
+        for marker in ["图片", "图像", "生图", "配图", "背景图", "logo", "image", "asset"]
+    )

@@ -4,7 +4,6 @@ import pytest
 
 from coductor.backends import factory
 from coductor.backends.codex_exec import CodexExecBackend
-from coductor.backends.codex_sdk import CodexSdkBackend
 from coductor.backends.factory import create_backend, resolve_codex_bin
 from coductor.backends.fake import FakeCodingBackend
 from coductor.config.models import CoductorConfig
@@ -79,13 +78,22 @@ def test_backend_factory_auto_falls_back_when_sdk_probe_fails(
     assert isinstance(backend, CodexExecBackend)
 
 
-def test_backend_factory_selects_sdk_when_available() -> None:
+def test_backend_factory_falls_back_when_sdk_backend_is_unimplemented() -> None:
     config = CoductorConfig.default()
     config.backend.provider = "codex_sdk"
 
     backend = create_backend(config, sdk_available=True)
 
-    assert isinstance(backend, CodexSdkBackend)
+    assert isinstance(backend, CodexExecBackend)
+
+
+def test_backend_factory_rejects_unimplemented_sdk_without_exec_fallback() -> None:
+    config = CoductorConfig.default()
+    config.backend.provider = "codex_sdk"
+    config.backend.fallback = "none"
+
+    with pytest.raises(BackendUnavailableError, match="not implemented yet"):
+        create_backend(config, sdk_available=True)
 
 
 def test_backend_factory_rejects_unknown_provider() -> None:

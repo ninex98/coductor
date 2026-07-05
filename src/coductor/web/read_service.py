@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from coductor.artifacts.repository import ArtifactRepository
 from coductor.artifacts.serializer import load_yaml
 from coductor.constants import CODUCTOR_DIR, VERSION
+from coductor.domain.enums import ArtifactType
 from coductor.services.report_service import ReportService, RunReportError
 from coductor.storage.database import Database
 from coductor.web.paths import ConsolePathError, read_text_preview, resolve_run_file
@@ -17,11 +19,15 @@ from coductor.web.schemas import (
     ConsoleCheckpointSummary,
     ConsoleEvent,
     ConsoleEvidenceSummary,
+    ConsoleGoalCriterionSummary,
+    ConsoleGoalLoopSummary,
     ConsoleHealth,
     ConsoleReleaseSummary,
+    ConsoleRepairSummary,
     ConsoleRunDetail,
     ConsoleRunSummary,
     ConsoleTextFile,
+    ConsoleToolEvidenceSummary,
 )
 from coductor.workflow.state import WorkflowState
 
@@ -70,6 +76,7 @@ class ConsoleReadService:
             events=self.get_events(run_id, tail=100),
             artifacts=self.list_artifacts(run_id),
             evidence=self._evidence_summary(run_id),
+            goal_loop=self._goal_loop_summary(run_id, checkpoint),
             release=self._release_summary(run_id),
         )
 
@@ -215,11 +222,78 @@ class ConsoleReadService:
             final_status=data["final_status"],
             gate_summary=data.get("gate_summary", {}),
             review_summary=data.get("review_summary", {}),
+            goal_satisfaction=data.get("goal_satisfaction", {}),
             validation=data.get("validation", {}),
             completed_tasks=data.get("completed_tasks", []),
             evidence_files=data.get("evidence_files", []),
             manual_checks=data.get("manual_checks", []),
             known_risks=data.get("known_risks", []),
+        )
+
+    def _goal_loop_summary(
+        self,
+        run_id: str,
+        checkpoint: ConsoleCheckpointSummary | None,
+    ) -> ConsoleGoalLoopSummary | None:
+        run_dir = self._run_dir(run_id)
+        repo = ArtifactRepository(run_dir)
+        verification = _artifact_data(
+            repo,
+            "03_verification_plan.yaml",
+            ArtifactType.VERIFICATION_PLAN,
+        )
+        satisfaction = _artifact_data(
+            repo,
+            "07_goal_satisfaction.yaml",
+            ArtifactType.GOAL_SATISFACTION_REPORT,
+        )
+        tools = _tool_summaries(repo)
+        repairs = _repair_summaries(repo)
+        raw_checkpoint = self.db.get_checkpoint(run_id)
+        has_checkpoint_loop = bool(
+            checkpoint
+            and (
+                checkpoint.stale_artifacts
+                or _checkpoint_int(raw_checkpoint, "goal_iteration")
+                or _checkpoint_int(raw_checkpoint, "satisfaction_repair_attempts")
+            )
+        )
+        if not any([verification, satisfaction, tools, repairs, has_checkpoint_loop]):
+            return None
+
+        criteria = _criterion_summaries(verification, satisfaction)
+        counts = _criterion_counts(criteria)
+        return ConsoleGoalLoopSummary(
+            verdict=str(satisfaction.get("verdict", "pending") if satisfaction else "pending"),
+            satisfied=counts["satisfied"],
+            not_satisfied=counts["not_satisfied"],
+            uncertain=counts["uncertain"],
+            unknown=counts["unknown"],
+            planned_criteria=len(criteria),
+            all_required_criteria_planned=(
+                verification.get("all_required_criteria_planned") if verification else None
+            ),
+            warnings=list(verification.get("warnings", []) if verification else []),
+            missing_evidence=list(satisfaction.get("missing_evidence", []) if satisfaction else []),
+            repair_recommendation=(
+                satisfaction.get("repair_recommendation") if satisfaction else None
+            ),
+            requires_repair=bool(satisfaction.get("requires_repair", False))
+            if satisfaction
+            else False,
+            requires_human=bool(satisfaction.get("requires_human", False))
+            if satisfaction
+            else False,
+            goal_iteration=_checkpoint_int(raw_checkpoint, "goal_iteration"),
+            satisfaction_repair_attempts=_checkpoint_int(
+                raw_checkpoint,
+                "satisfaction_repair_attempts",
+            ),
+            last_satisfaction_error=_checkpoint_str(raw_checkpoint, "last_satisfaction_error"),
+            stale_artifacts=checkpoint.stale_artifacts if checkpoint else [],
+            criteria=criteria,
+            tools=tools,
+            repairs=repairs,
         )
 
     def _release_summary(self, run_id: str) -> ConsoleReleaseSummary | None:
@@ -252,6 +326,177 @@ def _artifact_summary(path: str, envelope: Any) -> ConsoleArtifactSummary:
         sha256=envelope.metadata.content_sha256,
         producer=envelope.producer.name,
     )
+
+
+def _artifact_data(
+    repo: ArtifactRepository,
+    path: str,
+    artifact_type: ArtifactType,
+) -> dict[str, Any] | None:
+    target = repo.root / path
+    if not target.exists():
+        return None
+    try:
+        envelope = repo.read(path, artifact_type)
+    except (OSError, ValueError):
+        return None
+    data = envelope.data
+    if isinstance(data, dict):
+        return data
+    if hasattr(data, "model_dump"):
+        dumped = data.model_dump(mode="json")
+        return dumped if isinstance(dumped, dict) else None
+    return None
+
+
+def _criterion_summaries(
+    verification: dict[str, Any] | None,
+    satisfaction: dict[str, Any] | None,
+) -> list[ConsoleGoalCriterionSummary]:
+    plan_items = _dict_list(verification.get("items", []) if verification else [])
+    satisfaction_results = _dict_list(
+        satisfaction.get("criterion_results", []) if satisfaction else []
+    )
+    result_by_criterion = {
+        str(result.get("criterion_id", "")): result
+        for result in satisfaction_results
+        if result.get("criterion_id")
+    }
+    criteria: list[ConsoleGoalCriterionSummary] = []
+    seen: set[str] = set()
+    for item in plan_items:
+        criterion_id = str(item.get("criterion_id", ""))
+        if not criterion_id:
+            continue
+        seen.add(criterion_id)
+        result = result_by_criterion.get(criterion_id, {})
+        criteria.append(
+            ConsoleGoalCriterionSummary(
+                criterion_id=criterion_id,
+                description=_optional_str(item.get("description")),
+                verification=_optional_str(item.get("verification")),
+                tool=_optional_str(item.get("tool")),
+                required=bool(item.get("required", True)),
+                status=str(result.get("status", "unknown")),
+                evidence=_string_list(result.get("evidence", [])),
+                missing_evidence=_string_list(result.get("missing_evidence", [])),
+                reason=_optional_str(result.get("reason")),
+            )
+        )
+    for result in satisfaction_results:
+        criterion_id = str(result.get("criterion_id", ""))
+        if not criterion_id or criterion_id in seen:
+            continue
+        criteria.append(
+            ConsoleGoalCriterionSummary(
+                criterion_id=criterion_id,
+                status=str(result.get("status", "unknown")),
+                evidence=_string_list(result.get("evidence", [])),
+                missing_evidence=_string_list(result.get("missing_evidence", [])),
+                reason=_optional_str(result.get("reason")),
+            )
+        )
+    return criteria
+
+
+def _criterion_counts(criteria: list[ConsoleGoalCriterionSummary]) -> dict[str, int]:
+    counts = {"satisfied": 0, "not_satisfied": 0, "uncertain": 0, "unknown": 0}
+    for criterion in criteria:
+        if criterion.status in counts:
+            counts[criterion.status] += 1
+        else:
+            counts["unknown"] += 1
+    return counts
+
+
+def _tool_summaries(repo: ArtifactRepository) -> list[ConsoleToolEvidenceSummary]:
+    tool_root = repo.root / "tool_runs"
+    if not tool_root.exists():
+        return []
+    summaries: list[ConsoleToolEvidenceSummary] = []
+    for path in sorted(tool_root.glob("*/tool_result.yaml")):
+        relative_path = path.relative_to(repo.root).as_posix()
+        data = _artifact_data(repo, relative_path, ArtifactType.TOOL_RESULT)
+        if data is None:
+            continue
+        summaries.append(
+            ConsoleToolEvidenceSummary(
+                path=relative_path,
+                check_id=str(data.get("check_id", "")),
+                tool_run_id=str(data.get("tool_run_id", path.parent.name)),
+                tool=str(data.get("tool", "")),
+                required=bool(data.get("required", True)),
+                status=str(data.get("status", "unknown")),
+                command=str(data.get("command", "")),
+                duration_ms=int(data.get("duration_ms", 0) or 0),
+                stdout_path=str(data.get("stdout_path", "")),
+                stderr_path=str(data.get("stderr_path", "")),
+                artifacts=_string_list(data.get("artifacts", [])),
+                evidence_paths=_string_list(data.get("evidence_paths", [])),
+                observations=(
+                    data["observations"] if isinstance(data.get("observations"), dict) else {}
+                ),
+                failure_fingerprint=_optional_str(data.get("failure_fingerprint")),
+            )
+        )
+    return summaries
+
+
+def _repair_summaries(repo: ArtifactRepository) -> list[ConsoleRepairSummary]:
+    repair_root = repo.root / "repairs"
+    if not repair_root.exists():
+        return []
+    summaries: list[ConsoleRepairSummary] = []
+    for path in sorted(repair_root.glob("*/repair_request.yaml")):
+        relative_path = path.relative_to(repo.root).as_posix()
+        data = _artifact_data(repo, relative_path, ArtifactType.REPAIR_REQUEST)
+        if data is None:
+            continue
+        summaries.append(
+            ConsoleRepairSummary(
+                path=relative_path,
+                reason=str(data.get("reason", "")),
+                attempt=int(data.get("attempt", 0) or 0),
+                max_attempts=int(data.get("max_attempts", 0) or 0),
+                missing_criteria=_string_list(data.get("missing_criteria", [])),
+                missing_evidence=_string_list(data.get("missing_evidence", [])),
+                recommended_action=_optional_str(data.get("recommended_action")),
+            )
+        )
+    return summaries
+
+
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _checkpoint_int(data: Mapping[str, Any] | None, field: str) -> int:
+    if data is None:
+        return 0
+    try:
+        return int(data.get(field, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _checkpoint_str(data: Mapping[str, Any] | None, field: str) -> str | None:
+    if data is None or data.get(field) is None:
+        return None
+    return str(data[field])
 
 
 def _read_error_from_report(error: RunReportError) -> ConsoleReadError:

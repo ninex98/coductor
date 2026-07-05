@@ -641,7 +641,9 @@ def _approve_spec_if_required(
     if not spec.data.approval.required or spec.data.approval.approved_by:
         return False
     spec.data.approval.approved_by = "cli"
-    repo.write_next_revision("02_spec.yaml", spec)
+    spec = repo.write_next_revision("02_spec.yaml", spec)
+    if (repo.root / "03_verification_plan.yaml").exists():
+        WorkflowArtifactWriter(root, load_config(root)).write_verification_plan(repo, run_id, spec)
     now = _utc_now()
     db.update_run_status(run_id, RunStatus.RUNNING, now)
     db.add_event(run_id, "approve", "spec approved by cli", now)
@@ -806,10 +808,13 @@ def doctor() -> None:
         "codex_exec_bin": codex_bin,
         "codex_sdk_available": sdk_available,
         "backend_available": capability.available,
+        "backend_implemented": capability.implemented,
+        "backend_stability": capability.stability,
         "backend_resume_thread": capability.supports_resume_thread,
         "backend_streaming_logs": capability.supports_streaming_logs,
         "backend_cancel": capability.supports_cancel,
         "backend_usage": capability.supports_usage,
+        "backend_notes": capability.notes,
         "network_default": "disabled",
         "dangerous_defaults": "git_push=false, pull_request=false",
     }

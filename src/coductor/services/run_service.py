@@ -16,6 +16,7 @@ from coductor.artifacts.models import (
     ExecutionPlanData,
     GateReportData,
     GoalData,
+    GoalSatisfactionReportData,
     Producer,
     ReviewReportData,
 )
@@ -135,6 +136,9 @@ class RunService:
         self._event(run_id, "draft_spec", "writing specification artifact")
         spec = self.artifacts.write_spec(repo, run_id, goal, snapshot)
         state.artifacts["02_spec"] = "02_spec.yaml"
+        self._event(run_id, "create_verification_plan", "planning goal verification")
+        self.artifacts.write_verification_plan(repo, run_id, spec)
+        state.artifacts["03_verification_plan"] = "03_verification_plan.yaml"
         self._event(run_id, "create_execution_plan", "choosing execution strategy")
         plan = self.artifacts.write_plan(repo, run_id, spec, snapshot, requested_mode)
         state.artifacts["03_execution_plan"] = "03_execution_plan.yaml"
@@ -164,6 +168,7 @@ class RunService:
         self._event(run_id, "collect_goal", "accepted user goal")
         self._event(run_id, "inspect_repository", "capturing repository snapshot")
         self._event(run_id, "draft_spec", "writing specification artifact")
+        self._event(run_id, "create_verification_plan", "planning goal verification")
         self._event(run_id, "create_execution_plan", "choosing execution strategy")
         self._event(run_id, "materialize_tasks", "preparing worker tasks")
         context = self._build_runtime_context(repo, run_id)
@@ -452,6 +457,15 @@ class RunService:
         strategy: ExecutionStrategy,
         completed_task_ids: list[str],
     ) -> ArtifactEnvelope[EvidenceBundleData]:
+        goal_satisfaction = None
+        goal_satisfaction_path = repo.root / "07_goal_satisfaction.yaml"
+        if goal_satisfaction_path.exists():
+            goal_satisfaction = ArtifactEnvelope[GoalSatisfactionReportData].model_validate(
+                repo.read(
+                    "07_goal_satisfaction.yaml",
+                    ArtifactType.GOAL_SATISFACTION_REPORT,
+                ).model_dump(mode="json")
+            )
         return self.review_delivery.evidence(
             repo,
             run_id,
@@ -460,6 +474,7 @@ class RunService:
             review,
             strategy,
             completed_task_ids,
+            goal_satisfaction=goal_satisfaction,
         )
 
     def _store_run(self, state: WorkflowState, run_dir: Path) -> None:

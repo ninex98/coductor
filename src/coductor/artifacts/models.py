@@ -152,6 +152,24 @@ class ExecutionPlanData(StrictModel):
     validation: PlanValidation = Field(default_factory=PlanValidation)
 
 
+class VerificationPlanItem(StrictModel):
+    id: str
+    criterion_id: str
+    description: str
+    verification: VerificationType
+    tool: str = "quality_gate"
+    required: bool = True
+    commands: list[str] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+    fallback_if_unavailable: str | None = None
+
+
+class VerificationPlanData(StrictModel):
+    items: list[VerificationPlanItem] = Field(default_factory=list)
+    all_required_criteria_planned: bool = True
+    warnings: list[str] = Field(default_factory=list)
+
+
 class TaskData(StrictModel):
     task_id: str
     objective: str
@@ -250,15 +268,49 @@ class GateReportData(StrictModel):
     next_action: Literal["review", "repair", "human_required"]
 
 
+class ToolRequestData(StrictModel):
+    tool_run_id: str
+    check_id: str
+    tool: str
+    command: str
+    required: bool = True
+    timeout_seconds: int = 300
+    description: str = ""
+    evidence_paths: list[str] = Field(default_factory=list)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolResultData(StrictModel):
+    tool_run_id: str
+    check_id: str
+    tool: str
+    required: bool = True
+    status: Literal["passed", "failed", "skipped", "timeout"]
+    command: str
+    exit_code: int | None = None
+    duration_ms: int = 0
+    stdout_path: str
+    stderr_path: str
+    artifacts: list[str] = Field(default_factory=list)
+    artifact_hashes: dict[str, str] = Field(default_factory=dict)
+    evidence_paths: list[str] = Field(default_factory=list)
+    observations: dict[str, Any] = Field(default_factory=dict)
+    failure_fingerprint: str | None = None
+
+
 class RepairRequestData(StrictModel):
     repair_id: str
     target_task_id: str
     resume_thread_id: str | None
     attempt: int
     max_attempts: int
+    reason: Literal["gate_failure", "goal_not_satisfied", "missing_evidence"] = "gate_failure"
     failed_gates: list[str]
     failure_fingerprints: list[str]
     evidence_paths: list[str] = Field(default_factory=list)
+    missing_criteria: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
     allowed_paths: list[str] = Field(default_factory=list)
     forbidden_paths: list[str] = Field(default_factory=list)
     instruction: str = "只修复导致当前 Gate 失败的最小范围，不进行无关重构。"
@@ -302,6 +354,30 @@ class ReviewSummary(StrictModel):
     blocking_findings: int
 
 
+class GoalCriterionResult(StrictModel):
+    criterion_id: str
+    status: Literal["satisfied", "not_satisfied", "uncertain"]
+    evidence: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    reason: str
+
+
+class GoalSatisfactionReportData(StrictModel):
+    verdict: Literal["satisfied", "not_satisfied", "uncertain"]
+    criterion_results: list[GoalCriterionResult] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    repair_recommendation: str | None = None
+    requires_repair: bool = False
+    requires_human: bool = False
+
+
+class GoalSatisfactionSummary(StrictModel):
+    verdict: Literal["satisfied", "not_satisfied", "uncertain"] = "satisfied"
+    satisfied: int = 0
+    not_satisfied: int = 0
+    uncertain: int = 0
+
+
 class Rollback(StrictModel):
     method: str
     instructions: str
@@ -334,6 +410,9 @@ class EvidenceBundleData(StrictModel):
     acceptance_results: list[AcceptanceCoverage] = Field(default_factory=list)
     gate_summary: GateSummary
     review_summary: ReviewSummary
+    goal_satisfaction: GoalSatisfactionSummary = Field(
+        default_factory=GoalSatisfactionSummary
+    )
     usage_summary: WorkerUsage = Field(default_factory=WorkerUsage)
     evidence_files: list[EvidenceFile] = Field(default_factory=list)
     validation: EvidenceValidation = Field(default_factory=EvidenceValidation)

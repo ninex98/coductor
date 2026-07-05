@@ -12,6 +12,7 @@ from coductor.artifacts.models import (
     ExecutionPlanData,
     GateReportData,
     GoalData,
+    GoalSatisfactionReportData,
     RepositorySnapshotData,
     ReviewReportData,
     SpecificationData,
@@ -31,7 +32,9 @@ from coductor.workflow.nodes.integrate import integrate_changes_node
 from coductor.workflow.nodes.plan import create_execution_plan_node
 from coductor.workflow.nodes.repair import repair_failure_node
 from coductor.workflow.nodes.review import run_independent_review_node
+from coductor.workflow.nodes.satisfaction import evaluate_goal_satisfaction_node
 from coductor.workflow.nodes.specify import draft_spec_node
+from coductor.workflow.nodes.verification_plan import create_verification_plan_node
 from coductor.workflow.nodes.verify import run_quality_gates_node
 from coductor.workflow.runtime import WorkflowRuntimeContext
 from coductor.workflow.state import WorkflowState
@@ -41,6 +44,7 @@ WORKFLOW_NODES = [
     "inspect_repository",
     "draft_spec",
     "validate_spec",
+    "create_verification_plan",
     "create_execution_plan",
     "validate_execution_plan",
     "materialize_tasks",
@@ -48,6 +52,7 @@ WORKFLOW_NODES = [
     "integrate_changes",
     "run_quality_gates",
     "repair_failure",
+    "evaluate_goal_satisfaction",
     "run_independent_review",
     "prepare_evidence",
 ]
@@ -71,7 +76,7 @@ def _route_after_gates(state: WorkflowState) -> str:
     if state.status == RunStatus.HUMAN_REQUIRED:
         return END
     if state.gate_passed:
-        return "run_independent_review"
+        return "evaluate_goal_satisfaction"
     if state.repair_attempts < state.max_repair_attempts:
         return "repair_failure"
     return "prepare_evidence"
@@ -81,9 +86,21 @@ def _route_after_plan_validation(state: WorkflowState) -> str:
     return END if state.status == RunStatus.HUMAN_REQUIRED else "materialize_tasks"
 
 
+def _route_after_spec_validation(state: WorkflowState) -> str:
+    return END if state.status == RunStatus.HUMAN_REQUIRED else "create_verification_plan"
+
+
 def _route_after_review(state: WorkflowState) -> str:
     del state
     return "prepare_evidence"
+
+
+def _route_after_goal_satisfaction(state: WorkflowState) -> str:
+    if state.goal_satisfied:
+        return "run_independent_review"
+    if state.satisfaction_repair_attempts < state.max_repair_attempts:
+        return "repair_failure"
+    return "run_independent_review"
 
 
 def _route_after_review_with_context(
@@ -131,6 +148,15 @@ def build_workflow_graph(
         _contextual_spec_node(context) if context is not None else draft_spec_node,
     )
     _add_node(graph, "validate_spec", _stage_node("validate_spec"))
+    _add_node(
+        graph,
+        "create_verification_plan",
+        (
+            _contextual_verification_plan_node(context)
+            if context is not None
+            else create_verification_plan_node
+        ),
+    )
     _add_node(
         graph,
         "create_execution_plan",
@@ -188,6 +214,15 @@ def build_workflow_graph(
     )
     _add_node(
         graph,
+        "evaluate_goal_satisfaction",
+        (
+            _with_context(evaluate_goal_satisfaction_node, context)
+            if context is not None and context.verification is not None
+            else evaluate_goal_satisfaction_node
+        ),
+    )
+    _add_node(
+        graph,
         "run_independent_review",
         (
             _contextual_review_node(context)
@@ -209,7 +244,8 @@ def build_workflow_graph(
     graph.add_edge("collect_goal", "inspect_repository")
     graph.add_edge("inspect_repository", "draft_spec")
     graph.add_edge("draft_spec", "validate_spec")
-    graph.add_edge("validate_spec", "create_execution_plan")
+    graph.add_conditional_edges("validate_spec", _route_after_spec_validation)
+    graph.add_edge("create_verification_plan", "create_execution_plan")
     graph.add_edge("create_execution_plan", "validate_execution_plan")
     graph.add_conditional_edges("validate_execution_plan", _route_after_plan_validation)
     graph.add_edge("materialize_tasks", "dispatch_tasks")
@@ -217,6 +253,7 @@ def build_workflow_graph(
     graph.add_edge("integrate_changes", "run_quality_gates")
     graph.add_conditional_edges("run_quality_gates", _route_after_gates)
     graph.add_edge("repair_failure", "run_quality_gates")
+    graph.add_conditional_edges("evaluate_goal_satisfaction", _route_after_goal_satisfaction)
     graph.add_conditional_edges(
         "run_independent_review",
         _route_after_review_with_context(context) if context is not None else _route_after_review,
@@ -304,6 +341,18 @@ def _contextual_plan_node(context: WorkflowRuntimeContext) -> Callable[[Workflow
     return node
 
 
+def _contextual_verification_plan_node(
+    context: WorkflowRuntimeContext,
+) -> Callable[[WorkflowState], NodePatch]:
+    def node(state: WorkflowState) -> NodePatch:
+        spec = ArtifactEnvelope[SpecificationData].model_validate(
+            context.repo.read("02_spec.yaml", ArtifactType.SPECIFICATION).model_dump(mode="json")
+        )
+        return create_verification_plan_node(state, context=context, spec=spec)
+
+    return node
+
+
 def _contextual_integrate_node(
     context: WorkflowRuntimeContext,
 ) -> Callable[[WorkflowState], NodePatch]:
@@ -360,6 +409,14 @@ def _contextual_repair_node(
                 ArtifactType.GATE_REPORT,
             ).model_dump(mode="json")
         )
+        goal_satisfaction = None
+        if (context.repo.root / "07_goal_satisfaction.yaml").exists() and not state.goal_satisfied:
+            goal_satisfaction = ArtifactEnvelope[GoalSatisfactionReportData].model_validate(
+                context.repo.read(
+                    "07_goal_satisfaction.yaml",
+                    ArtifactType.GOAL_SATISFACTION_REPORT,
+                ).model_dump(mode="json")
+            )
         return repair_failure_node(
             state,
             context=context,
@@ -370,6 +427,7 @@ def _contextual_repair_node(
             gate_report=gate_report,
             repair=repair,
             target_task_id=target_task_id,
+            goal_satisfaction=goal_satisfaction,
         )
 
     return node

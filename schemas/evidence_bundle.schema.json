@@ -93,15 +93,19 @@
         "goal",
         "repository_snapshot",
         "specification",
+        "verification_plan",
         "execution_plan",
         "task",
         "worker_request",
         "worker_result",
         "integration",
         "gate_report",
+        "tool_request",
+        "tool_result",
         "repair_request",
         "repair_result",
         "review_report",
+        "goal_satisfaction_report",
         "evidence_bundle",
         "release_manifest"
       ],
@@ -142,6 +146,9 @@
         },
         "gate_summary": {
           "$ref": "#/$defs/GateSummary"
+        },
+        "goal_satisfaction": {
+          "$ref": "#/$defs/GoalSatisfactionSummary"
         },
         "goal_title": {
           "title": "Goal Title",
@@ -271,6 +278,38 @@
         "failed"
       ],
       "title": "GateSummary",
+      "type": "object"
+    },
+    "GoalSatisfactionSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "not_satisfied": {
+          "default": 0,
+          "title": "Not Satisfied",
+          "type": "integer"
+        },
+        "satisfied": {
+          "default": 0,
+          "title": "Satisfied",
+          "type": "integer"
+        },
+        "uncertain": {
+          "default": 0,
+          "title": "Uncertain",
+          "type": "integer"
+        },
+        "verdict": {
+          "default": "satisfied",
+          "enum": [
+            "satisfied",
+            "not_satisfied",
+            "uncertain"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "title": "GoalSatisfactionSummary",
       "type": "object"
     },
     "Producer": {

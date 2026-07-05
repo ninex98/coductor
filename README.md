@@ -5,6 +5,21 @@
 
 Coductor 是面向 AI Coding Agent 的确定性研发工作流引擎。它把一句自然语言研发目标，拆成可审计、可恢复、可验证的工程流程：模型负责理解、计划、编码与诊断；Coductor 负责阶段契约、质量门、Evidence、状态恢复和安全边界。
 
+## CLI 启动标识 / CLI Welcome Banner
+
+无参数执行 `coductor` 时，会先展示这组终端字母 Logo。它和 CLI 的定位保持一致：从目标进入，经过确定性流程，最终到达可验证交付。
+
+```text
+   ______          __           __
+  / ____/___  ____/ /_  _______/ /_____  _____
+ / /   / __ \/ __  / / / / ___/ __/ __ \/ ___/
+/ /___/ /_/ / /_/ / /_/ / /__/ /_/ /_/ / /
+\____/\____/\__,_/\__,_/\___/\__/\____/_/
+
+        AI Coding Workflow Engine
+        From goal to verified change.
+```
+
 ```text
 Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evidence
 ```

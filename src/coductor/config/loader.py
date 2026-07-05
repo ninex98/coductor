@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 from coductor.artifacts.serializer import dump_yaml, load_yaml
-from coductor.config.models import CoductorConfig, QualityGateConfig
+from coductor.config.models import (
+    BrowserCheckConfig,
+    CoductorConfig,
+    QualityGateConfig,
+    ToolCheckConfig,
+)
 from coductor.repository.node import node_package_manager, node_script_command, node_scripts
 from coductor.repository.python import pyproject_tools
 
@@ -28,6 +34,7 @@ def discover_config(root: Path) -> CoductorConfig:
     config = CoductorConfig.default()
     config.project.name = root.name
     config.quality_gates = _discover_quality_gates(root)
+    config.tool_checks = _discover_tool_checks(root)
     return config
 
 
@@ -102,3 +109,43 @@ def _discover_quality_gates(root: Path) -> list[QualityGateConfig]:
             QualityGateConfig(id="composer_test", command="composer test", timeout_seconds=300)
         )
     return gates
+
+
+def _discover_tool_checks(root: Path) -> list[ToolCheckConfig]:
+    package_json = root / "package.json"
+    if not package_json.exists():
+        return []
+    scripts = node_scripts(root)
+    start_script = _browser_start_script(scripts)
+    if start_script is None:
+        return []
+    package_manager = node_package_manager(root)
+    return [
+        ToolCheckConfig(
+            id="browser_smoke",
+            tool="browser",
+            required=True,
+            timeout_seconds=60,
+            description="Auto-discovered browser smoke check for Node.js UI project",
+            browser=BrowserCheckConfig(
+                url=_browser_default_url(scripts[start_script]),
+                start_command=node_script_command(package_manager, start_script),
+                selectors=["body"],
+                screenshot=True,
+            ),
+        )
+    ]
+
+
+def _browser_start_script(scripts: dict[str, str]) -> str | None:
+    for name in ["preview", "dev", "start"]:
+        if name in scripts:
+            return name
+    return None
+
+
+def _browser_default_url(command: str) -> str:
+    match = re.search(r"(?:--port(?:=|\s+)|-p\s+|PORT=)(\d{2,5})", command)
+    if match:
+        return f"http://127.0.0.1:{match.group(1)}"
+    return "http://127.0.0.1:5173"

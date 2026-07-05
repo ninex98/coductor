@@ -33,3 +33,7 @@ class WorkflowState(BaseModel):
     gate_passed: bool = True
     max_repair_attempts: int = 0
     review_passed: bool = True
+    goal_satisfied: bool = True
+    goal_iteration: int = 0
+    satisfaction_repair_attempts: int = 0
+    last_satisfaction_error: str | None = None

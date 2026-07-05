@@ -7,6 +7,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from coductor.backends.base import CodingBackend
+from coductor.backends.capabilities import describe_backend_capability
 from coductor.backends.codex_exec import CodexExecBackend
 from coductor.backends.codex_sdk import CodexSdkBackend
 from coductor.backends.fake import FakeCodingBackend
@@ -28,8 +29,16 @@ def create_backend(
         return CodexExecBackend(codex_bin=resolve_codex_bin())
     if provider == "codex_sdk":
         sdk_available = is_codex_sdk_available() if sdk_available is None else sdk_available
-        if sdk_available is False and config.backend.fallback == "codex_exec":
+        capability = describe_backend_capability(provider, sdk_available=sdk_available)
+        if not capability.implemented and config.backend.fallback == "codex_exec":
             return CodexExecBackend(codex_bin=resolve_codex_bin())
+        if not capability.implemented:
+            raise BackendUnavailableError(
+                "codex_sdk backend is not implemented yet; configure fallback=codex_exec",
+                stage="backend",
+                recoverable=True,
+                next_command="coductor doctor",
+            )
         return CodexSdkBackend(config.backend)
     raise BackendUnavailableError(
         f"unknown backend provider: {provider}",

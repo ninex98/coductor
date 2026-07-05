@@ -182,6 +182,7 @@ def test_contextual_workflow_graph_executes_happy_path_delivery(tmp_path) -> Non
     assert result["status"] == RunStatus.READY_FOR_HUMAN_REVIEW
     assert (run_dir / "04_integration.yaml").exists()
     assert (run_dir / "05_gate_report.yaml").exists()
+    assert (run_dir / "07_goal_satisfaction.yaml").exists()
     assert (run_dir / "06_review.yaml").exists()
     assert (run_dir / "07_evidence.yaml").exists()
     assert (run_dir / "delivery-report.md").exists()

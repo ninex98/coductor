@@ -7,6 +7,7 @@ from coductor.artifacts.models import (
     EvidenceBundleData,
     GateSummary,
     GoalData,
+    GoalSatisfactionSummary,
     Producer,
     ReleaseGitState,
     ReleaseManifestData,
@@ -119,6 +120,10 @@ def test_local_console_run_detail_includes_evidence_and_release_summary(
             completed_tasks=["T001"],
             gate_summary=GateSummary(required=1, passed=1, failed=0),
             review_summary=ReviewSummary(blocking_findings=0),
+            goal_satisfaction=GoalSatisfactionSummary(
+                verdict="satisfied",
+                satisfied=1,
+            ),
             rollback=Rollback(method="git revert", instructions="人工回滚。"),
         ),
     )
@@ -154,6 +159,7 @@ def test_local_console_run_detail_includes_evidence_and_release_summary(
     data = response.body["data"]
     assert data["evidence"]["final_status"] == "ready_for_human_review"
     assert data["evidence"]["gate_summary"]["passed"] == 1
+    assert data["evidence"]["goal_satisfaction"]["verdict"] == "satisfied"
     assert data["release"]["status"] == "ready"
     assert data["release"]["remote_actions_allowed"] is False
 
@@ -199,6 +205,7 @@ def test_local_console_serves_static_assets(tmp_path: Path) -> None:
     assert 'content="console-token"' in index.text
     assert 'data-tab="logs"' in index.text
     assert 'data-tab="evidence"' in index.text
+    assert 'data-tab="goal-loop"' in index.text
     assert 'data-tab="release"' in index.text
     assert css.status == 200
     assert "coductor-shell" in css.text
@@ -206,6 +213,7 @@ def test_local_console_serves_static_assets(tmp_path: Path) -> None:
     assert "fetchJson" in js.text
     assert "renderLogs" in js.text
     assert "renderEvidence" in js.text
+    assert "renderGoalLoop" in js.text
     assert "renderRelease" in js.text
 
 
@@ -234,6 +242,9 @@ def test_local_console_doctor_reports_backend_and_permissions(tmp_path: Path) ->
     checks = response.body["data"]["checks"]
     assert checks["backend_provider"] == "fake"
     assert checks["backend_available"] is True
+    assert checks["backend_implemented"] is True
+    assert checks["backend_stability"] == "test_only"
+    assert checks["backend_capabilities"]["supports_usage"] is False
     assert checks["permission_defaults"]["allow_git_push"] is False
 
 
@@ -263,3 +274,33 @@ def test_local_console_doctor_reports_effective_backend_for_sdk_fallback(
     assert checks["backend_provider"] == "codex_sdk"
     assert checks["backend_effective_provider"] == "codex_exec"
     assert checks["backend_available"] is True
+    assert checks["backend_implemented"] is True
+
+
+def test_local_console_doctor_falls_back_when_sdk_backend_is_unimplemented(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "coductor.yaml").write_text(
+        "\n".join(
+            [
+                'schema_version: "1.0"',
+                "backend:",
+                "  provider: codex_sdk",
+                "  fallback: codex_exec",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(doctor_service, "is_codex_sdk_available", lambda: True)
+    app = create_app(tmp_path)
+
+    response = app.handle("GET", "/api/doctor")
+
+    assert response.status == 200
+    checks = response.body["data"]["checks"]
+    assert checks["backend_provider"] == "codex_sdk"
+    assert checks["backend_effective_provider"] == "codex_exec"
+    assert checks["backend_capabilities"]["provider"] == "codex_exec"
+    assert checks["backend_capabilities"]["supports_resume_thread"] is False

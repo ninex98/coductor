@@ -18,7 +18,9 @@ from coductor.artifacts.models import (
     FileReference,
     PlanTask,
     Producer,
+    SpecificationData,
     TaskData,
+    VerificationPlanData,
     WorkerRequestData,
     WorkerResultData,
 )
@@ -34,7 +36,7 @@ from coductor.domain.enums import (
     ProducerKind,
     SandboxMode,
 )
-from coductor.prompts.renderer import render_worker_prompt
+from coductor.prompts.renderer import PromptSection, render_worker_prompt
 from coductor.repository.worktree import WorktreeManager
 from coductor.security import redact_sensitive_list, redact_sensitive_text
 from coductor.services.usage import usage_from_backend
@@ -331,7 +333,12 @@ class TaskExecutionService:
             objective=plan_task.title,
             role=plan_task.role,
             depends_on=plan_task.depends_on,
-            global_context=["00_goal.yaml", "01_repository_snapshot.yaml", "02_spec.yaml"],
+            global_context=[
+                "00_goal.yaml",
+                "01_repository_snapshot.yaml",
+                "02_spec.yaml",
+                "03_verification_plan.yaml",
+            ],
             upstream_artifacts=[
                 f"tasks/{dependency}/worker_result.yaml"
                 for dependency in plan_task.depends_on
@@ -397,6 +404,7 @@ class TaskExecutionService:
                 "builder",
                 request_data.context_artifacts,
                 task.data.objective,
+                sections=self._builder_prompt_sections(repo, task.data),
             )
             before_snapshot = self.workspace_snapshot(workspace)
             request = WorkerRequest(
@@ -471,6 +479,81 @@ class TaskExecutionService:
         )
         repo.write(f"tasks/{task_id}/worker_result.yaml", result_envelope)
         return handle
+
+    def _builder_prompt_sections(
+        self,
+        repo: ArtifactRepository,
+        task: TaskData,
+    ) -> list[PromptSection]:
+        return [
+            PromptSection("Acceptance Criteria", self._acceptance_criteria(repo, task)),
+            PromptSection("Verification Plan", self._verification_items(repo, task)),
+            PromptSection(
+                "Path Boundaries",
+                [
+                    f"allowed_paths: {', '.join(task.allowed_paths) or '(none)'}",
+                    f"forbidden_paths: {', '.join(task.forbidden_paths) or '(none)'}",
+                ],
+            ),
+            PromptSection(
+                "Expected Outputs",
+                task.expected_outputs or ["No explicit output files declared."],
+            ),
+            PromptSection(
+                "Quality Gates",
+                task.quality_gates or ["No configured quality gates for this task."],
+            ),
+        ]
+
+    def _acceptance_criteria(
+        self,
+        repo: ArtifactRepository,
+        task: TaskData,
+    ) -> list[str]:
+        spec_path = repo.root / "02_spec.yaml"
+        if not spec_path.exists():
+            return []
+        spec = ArtifactEnvelope[SpecificationData].model_validate(
+            repo.read("02_spec.yaml", ArtifactType.SPECIFICATION).model_dump(mode="json")
+        )
+        task_criteria = set(task.acceptance_criteria)
+        criteria = [
+            criterion
+            for criterion in spec.data.acceptance_criteria
+            if not task_criteria or criterion.id in task_criteria
+        ]
+        return [
+            f"{criterion.id} [{criterion.priority}/{criterion.verification}]: {criterion.statement}"
+            for criterion in criteria
+        ]
+
+    def _verification_items(
+        self,
+        repo: ArtifactRepository,
+        task: TaskData,
+    ) -> list[str]:
+        plan_path = repo.root / "03_verification_plan.yaml"
+        if not plan_path.exists():
+            return []
+        plan = ArtifactEnvelope[VerificationPlanData].model_validate(
+            repo.read("03_verification_plan.yaml", ArtifactType.VERIFICATION_PLAN).model_dump(
+                mode="json"
+            )
+        )
+        task_criteria = set(task.acceptance_criteria)
+        items = [
+            item
+            for item in plan.data.items
+            if not task_criteria or item.criterion_id in task_criteria
+        ]
+        return [
+            (
+                f"{item.id} -> {item.criterion_id}: tool={item.tool}, "
+                f"required={item.required}, evidence={', '.join(item.evidence_paths) or '(none)'}, "
+                f"commands={', '.join(item.commands) or '(none)'}"
+            )
+            for item in items
+        ]
 
     def apply_parallel_patches(
         self,

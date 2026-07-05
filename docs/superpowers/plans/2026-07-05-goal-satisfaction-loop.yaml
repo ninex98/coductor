@@ -1,0 +1,514 @@
+schema_version: "1.0"
+artifact_type: coductor_implementation_plan
+artifact_id: plan_goal_satisfaction_loop_20260705
+status: validated
+created_at: "2026-07-05T00:00:00+08:00"
+updated_at: "2026-07-05T21:37:00+08:00"
+producer:
+  kind: assistant
+  name: codex
+data:
+  title: "Coductor Goal Satisfaction Loop 完整实现规划"
+  objective: >
+    将 Coductor 从一次性 Codex run 包装器升级为目标闭环执行器：
+    系统围绕用户目标持续补齐实现、验证、修复和证据，直到能够证明目标满足，
+    或明确进入 human_required 并说明缺少什么证据。
+  diagnosis:
+    current_role: "可审计、可恢复、可验证的 Codex run 控制层"
+    current_gap:
+      - "验证层主要检查 pytest、ruff、build 等配置 gate，不等于验证用户真实目标"
+      - "repair loop 主要响应质量门失败，不响应目标未满足"
+      - "spec 和 plan 多为规则生成，缺少对目标的可验证拆解"
+      - "worker prompt 过薄，未充分注入相关文件、验收标准、验证计划和失败证据"
+      - "浏览器、截图、生图、视觉 QA 等工具能力还不是一等工作流节点"
+    product_thesis: >
+      Coductor 不应该定位为 Better Codex，而应该定位为 Verified Codex Runs：
+      Codex 负责实现，Coductor 负责把目标变成可验证闭环、工具调用计划、质量证据和安全边界。
+
+  target_behavior:
+    interaction_principle: >
+      所有阶段交互必须延续 Coductor 既有方式：以标准化 YAML Artifact 作为唯一事实来源。
+      CLI、Web 控制台、Worker、Reviewer、Repairer 和后续工具节点都只能围绕这些 Artifact
+      读取、写入、校验和恢复；自由文本只能作为展示层摘要，不能作为下游决策依据。
+    default_loop:
+      - stage: intake
+        output: "00_goal.yaml"
+        responsibility: "记录原始目标、用户约束、目标类型和风险提示"
+      - stage: inspect
+        output: "01_repository_snapshot.yaml"
+        responsibility: "采集仓库事实、可用命令、项目类型、潜在验证工具"
+      - stage: specify
+        output: "02_spec.yaml"
+        responsibility: "生成明确验收标准，区分自动验证、工具验证、人工判断"
+      - stage: verification_planning
+        output: "03_verification_plan.yaml"
+        responsibility: "决定需要哪些验证：测试、lint、build、API、浏览器、截图、生图、文档等"
+      - stage: execution_planning
+        output: "04_execution_plan.yaml"
+        responsibility: "生成执行任务，默认 Solo First，必要时 pipeline/parallel"
+      - stage: execute
+        output: "tasks/*/worker_result.yaml"
+        responsibility: "调用 Codex 修改代码、补测试、补验证脚本、补资源"
+      - stage: integrate
+        output: "05_integration.yaml"
+        responsibility: "整合 patch、记录冲突、保护边界"
+      - stage: verify
+        output: "06_gate_report.yaml"
+        responsibility: "运行 deterministic gates 和 tool-aware checks"
+      - stage: goal_satisfaction
+        output: "07_goal_satisfaction.yaml"
+        responsibility: "对照原目标、spec、diff、gate、截图/日志判断是否真的满足目标"
+      - stage: repair_or_replan
+        output: "repairs/* 或 replans/*"
+        responsibility: "若目标未满足，判断补实现、补测试、补验证还是请求人工确认"
+      - stage: review
+        output: "08_review.yaml"
+        responsibility: "独立审查最终变更，不能替代目标满足判断"
+      - stage: evidence
+        output: "09_evidence.yaml"
+        responsibility: "只有 gates、goal_satisfaction、review、patch/tool evidence 全部满足才 ready"
+    status_rule:
+      ready_for_human_review_requires:
+        - "所有 required quality gates passed"
+        - "goal_satisfaction.verdict == satisfied"
+        - "blocking review findings == 0"
+        - "至少存在一个 patch evidence"
+        - "所有 required acceptance criteria 都有 evidence"
+      human_required_when:
+        - "目标含糊且无法生成可验证验收标准"
+        - "同类失败指纹重复"
+        - "达到最大闭环次数"
+        - "需要人工审美、业务判断、外部账号或生产权限"
+        - "所需工具能力不可用"
+
+  loop_policy:
+    default_max_goal_iterations: 3
+    default_max_repair_attempts_per_iteration: 2
+    no_infinite_loop: true
+    repeated_failure_detection:
+      inputs:
+        - "gate failure fingerprint"
+        - "goal satisfaction failure reason"
+        - "changed files"
+        - "tool check output"
+      action: "重复失败进入 human_required，而不是继续消耗"
+    each_iteration_must_record:
+      - "为什么本轮不满足目标"
+      - "下一轮是补实现、补测试、补验证还是重规划"
+      - "本轮新增或修改的 evidence"
+      - "下一步可恢复命令"
+
+  standardized_interaction_contract:
+    rule: "所有正式阶段交接都必须写入 YAML Artifact，不使用自由文本作为下游事实来源"
+    artifact_envelope_required_fields:
+      - "schema_version"
+      - "artifact_type"
+      - "artifact_id"
+      - "run_id"
+      - "revision"
+      - "status"
+      - "created_at"
+      - "producer"
+      - "inputs"
+      - "metadata.content_sha256"
+      - "data"
+    artifact_rules:
+      - "每种新 artifact 必须有 Pydantic model"
+      - "每种新 artifact 必须能生成 JSON Schema"
+      - "写入必须保持 atomic write + history revision"
+      - "下游 artifact 必须记录上游 inputs 的 path、revision、sha256"
+      - "resume 前必须校验 hash、revision、contract/tool evidence 是否 stale"
+      - "CLI/Web 只渲染 artifact 和 SQLite event，不创造第二事实来源"
+      - "Worker 普通文本输出必须被 Coductor 解析或包装成 typed artifact 后才能进入下游"
+      - "Tool 调用请求和结果必须分别写入 tool_request.yaml 和 tool_result.yaml"
+      - "图片、截图、日志、patch 等二进制或文本文件必须通过 FileReference 进入 artifact"
+    implemented_artifact_rules:
+      - id: resume_stale_tool_evidence_check
+        status: implemented
+        evidence:
+          - "ToolResultData.artifact_hashes"
+          - "ArtifactLineageValidator._validate_tool_result_files"
+          - "ArtifactLineageValidator._validate_evidence_files"
+    phase_handoff_files:
+      intake: "00_goal.yaml"
+      inspect: "01_repository_snapshot.yaml"
+      specify: "02_spec.yaml"
+      verification_planning: "03_verification_plan.yaml"
+      execution_planning: "04_execution_plan.yaml"
+      execute:
+        - "tasks/<task-id>/task.yaml"
+        - "tasks/<task-id>/worker_request.yaml"
+        - "tasks/<task-id>/worker_result.yaml"
+        - "tasks/<task-id>/patch.diff"
+      integrate: "05_integration.yaml"
+      verify: "06_gate_report.yaml"
+      goal_satisfaction: "07_goal_satisfaction.yaml"
+      review: "08_review.yaml"
+      evidence: "09_evidence.yaml"
+      release: "10_release_manifest.yaml"
+      repair:
+        - "repairs/<repair-id>/repair_request.yaml"
+        - "repairs/<repair-id>/repair_result.yaml"
+        - "repairs/<repair-id>/repair_result.patch"
+      replan: "replans/<replan-id>/replan.yaml"
+      tool_runs:
+        - "tool_runs/<tool-run-id>/tool_request.yaml"
+        - "tool_runs/<tool-run-id>/tool_result.yaml"
+    status_authority:
+      rule: "Agent 声称不具备完成状态决定权"
+      ready_source: "09_evidence.yaml.data.final_status"
+      supporting_sources:
+        - "06_gate_report.yaml"
+        - "07_goal_satisfaction.yaml"
+        - "08_review.yaml"
+        - "tool_runs/*/tool_result.yaml"
+        - "tasks/*/patch.diff"
+      human_required_source: "任一必需 gate、goal criterion、review blocking 或 evidence validation 失败"
+
+  tool_aware_verification:
+    capability_registry:
+      purpose: "让 Planner 明确知道当前项目和当前环境能用哪些验证工具"
+      initial_capabilities:
+        - id: quality_gate
+          status: implemented
+          examples: ["pytest", "ruff", "mypy", "npm test", "npm run build"]
+        - id: browser_check
+          status: implemented
+          examples: ["启动本地服务", "打开页面", "截图", "检查 DOM", "检查 console error"]
+        - id: screenshot_check
+          status: planned
+          examples: ["布局溢出", "首屏内容", "关键视觉元素存在"]
+        - id: image_generation
+          status: contract_implemented
+          examples: ["产品图", "背景图", "插画", "纹理", "sprite"]
+        - id: api_check
+          status: command_backed
+          examples: ["HTTP endpoint smoke", "JSON schema validation"]
+        - id: document_check
+          status: later
+          examples: ["PDF/DOCX 渲染检查"]
+    browser_validation_policy:
+      trigger_when:
+        - "目标涉及 Web UI、页面、交互、视觉布局、前端应用"
+        - "仓库存在 package.json 且有 dev/build/preview 脚本"
+        - "acceptance criteria 包含浏览器可验证行为"
+      first_implementation:
+        - "生成 browser_check command artifact"
+        - "优先复用项目已有 Playwright 测试或 npm scripts"
+        - "没有现成测试时，由 Coductor 生成最小 smoke script 到 run 目录，不污染项目源码"
+        - "收集 screenshot、console logs、DOM assertions 到 tool evidence"
+      later_implementation:
+        - "一等 Playwright runner service"
+        - "多 viewport 截图"
+        - "截图像素非空、布局不重叠、关键文本可见检查"
+    image_generation_policy:
+      trigger_when:
+        - "目标明确需要新增或替换位图视觉资产"
+        - "实现缺少必要图片会导致目标不可验收"
+      safeguards:
+        - "默认一次只生成一张候选图"
+        - "禁止默认批量生成"
+        - "批量生成需要显式人工批准"
+        - "生成 prompt、用途、文件路径、sha256 必须落入 artifact"
+        - "生成后必须通过浏览器或文件引用检查证明被正确使用"
+      first_implementation:
+        - "先定义 image_asset_request / image_asset_result artifact"
+        - "若运行环境没有生图 backend，则进入 human_required 并说明需要的图片规格"
+      later_implementation:
+        - "接入可用 image backend"
+        - "支持透明背景、尺寸、风格和参考图约束"
+        - "支持单张重试，但必须记录为什么重试"
+
+  new_artifacts:
+    - path: "03_verification_plan.yaml"
+      artifact_type: verification_plan
+      purpose: "把验收标准映射到具体验证工具和证据"
+      key_fields:
+        - "criteria_id"
+        - "verification_type"
+        - "tool"
+        - "command_or_action"
+        - "required"
+        - "evidence_paths"
+        - "fallback_if_unavailable"
+    - path: "07_goal_satisfaction.yaml"
+      artifact_type: goal_satisfaction_report
+      purpose: "判断目标是否真的满足，而不是只看测试是否通过"
+      key_fields:
+        - "verdict: satisfied | not_satisfied | uncertain"
+        - "criterion_results"
+        - "missing_evidence"
+        - "repair_recommendation"
+        - "requires_human_reason"
+    - path: "tool_runs/*/tool_request.yaml"
+      artifact_type: tool_request
+      purpose: "记录浏览器、生图、API、截图等工具调用请求"
+    - path: "tool_runs/*/tool_result.yaml"
+      artifact_type: tool_result
+      purpose: "记录工具输出、日志、截图、图片、失败信息和 usage"
+    - path: "replans/*/replan.yaml"
+      artifact_type: replan
+      purpose: "当目标未满足但不是普通 gate failure 时，记录下一轮策略调整"
+
+  implementation_milestones:
+    - id: M0
+      name: "定位和文件编号整理"
+      goal: "避免继续把 Coductor 描述成单次 run 包装器"
+      changes:
+        - "更新 README 的一句话定位为 Verified Codex Runs / Goal Satisfaction Loop"
+        - "保留现有 artifact 兼容性，新增 artifact 先不打破旧 run"
+        - "明确 codex_sdk 目前是实验边界，默认真实路径为 codex_exec"
+      tests:
+        - "documentation contract tests"
+      done_when:
+        - "用户能从 README 看懂 Coductor 与直接 Codex 的差异"
+
+    - id: M1
+      name: "Verification Plan Artifact"
+      goal: "先让系统知道要验证什么，而不是只跑配置 gate"
+      changes:
+        - "新增 VerificationPlanData Pydantic model"
+        - "生成 schemas/verification_plan.schema.json"
+        - "新增 workflow node: create_verification_plan"
+        - "从 spec acceptance criteria 推导 verification items"
+        - "Evidence 中记录每个 criterion 的 evidence mapping"
+      tests:
+        - "unit: verification plan schema and serializer"
+        - "unit: criteria to verification mapping"
+        - "integration: run produces 03_verification_plan.yaml"
+      done_when:
+        - "每条 required acceptance criterion 都有 planned verification"
+
+    - id: M2
+      name: "Goal Satisfaction Report"
+      goal: "把是否满足目标从 review/evidence 中独立出来"
+      changes:
+        - "新增 GoalSatisfactionReportData"
+        - "新增 service: GoalSatisfactionService"
+        - "新增 workflow node: evaluate_goal_satisfaction"
+        - "Evidence ready 条件加入 goal_satisfaction.verdict == satisfied"
+        - "CLI report / explain 展示 not_satisfied 的具体原因"
+      tests:
+        - "unit: evidence rejects missing/not_satisfied goal report"
+        - "integration: gates pass but goal_satisfaction not_satisfied => human_required"
+        - "integration: gates pass and goal_satisfaction satisfied => ready_for_human_review"
+      done_when:
+        - "测试通过不再自动等于目标满足"
+
+    - id: M3
+      name: "Generalized Repair/Replan Loop"
+      goal: "不满足目标时能自动补实现、补测试、补验证，而不只是修测试失败"
+      changes:
+        - "WorkflowState 增加 goal_iteration、last_satisfaction_error、replan_count"
+        - "新增 repair reason: gate_failure | goal_not_satisfied | missing_evidence | tool_unavailable"
+        - "RepairRequestData 增加 missing_criteria、evidence_paths、recommended_action"
+        - "Graph route: goal_satisfaction not_satisfied -> repair_or_replan -> verify"
+        - "加入重复失败指纹和最大循环限制"
+      tests:
+        - "integration: fake backend first pass misses criterion, repair pass satisfies"
+        - "integration: repeated same satisfaction failure => human_required"
+        - "unit: loop budget and failure fingerprint"
+      done_when:
+        - "Coductor 能在目标不满足时进入有限自动修复循环"
+
+    - id: M4
+      name: "Tool-Aware Verification Foundation"
+      implementation_status: implemented
+      goal: "让浏览器/API/截图等验证成为一等证据"
+      changes:
+        - "新增 ToolRequestData / ToolResultData"
+        - "新增 ToolCapabilityRegistry"
+        - "新增 ToolVerificationService"
+        - "先支持 command-backed browser/api checks，不强依赖新运行时"
+        - "tool result 进入 evidence_files"
+      implemented_artifacts:
+        - "tool_runs/<tool-run-id>/tool_request.yaml"
+        - "tool_runs/<tool-run-id>/tool_result.yaml"
+        - "schemas/tool_request.schema.json"
+        - "schemas/tool_result.schema.json"
+      tests:
+        - "unit: tool capability selection"
+        - "unit: tool result path safety"
+        - "integration: configured browser smoke command failure triggers repair/human_required"
+      done_when:
+        - "VerificationPlan 可以要求 tool check，Evidence 能引用 tool result"
+
+    - id: M5
+      name: "Browser Validation Runner"
+      implementation_status: implemented
+      goal: "Web/UI 目标可通过浏览器证据验证"
+      changes:
+        - "识别 package.json dev/build/preview scripts"
+        - "支持 run_dir 内生成临时 Playwright smoke script"
+        - "记录 screenshots、console errors、DOM assertion result"
+        - "失败截图进入 repair prompt"
+      implemented_artifacts:
+        - "tool_runs/<tool-run-id>/browser_smoke.mjs"
+        - "tool_runs/<tool-run-id>/browser_options.json"
+        - "tool_runs/<tool-run-id>/browser_summary.json"
+        - "tool_runs/<tool-run-id>/browser_console.log"
+        - "tool_runs/<tool-run-id>/browser_screenshot.png"
+      tests:
+        - "integration: local static page browser check"
+        - "integration: console error fails browser check"
+        - "integration: screenshot evidence recorded"
+      done_when:
+        - "前端目标默认不只跑 unit tests，而会留下浏览器证据"
+
+    - id: M6
+      name: "Image Asset Request Contract"
+      implementation_status: implemented
+      goal: "目标需要图片时，有受控、单张优先、可追踪的生图步骤"
+      changes:
+        - "新增 ImageAssetRequestData / ImageAssetResultData 或复用 ToolRequestData"
+        - "Planner 识别 image_needed criteria"
+        - "默认一次一张候选图"
+        - "无 image backend 时 human_required，说明尺寸、用途、prompt"
+        - "图片被引用后由 browser/file check 验证"
+      implemented_artifacts:
+        - "tool_runs/<tool-run-id>/tool_request.yaml"
+        - "tool_runs/<tool-run-id>/tool_result.yaml"
+        - "tool_runs/<tool-run-id>/image_asset_request.json"
+      tests:
+        - "unit: image generation defaults to single candidate"
+        - "unit: batch image request requires approval flag"
+        - "integration: missing image backend produces actionable human_required"
+      done_when:
+        - "生图需求不会静默失败，也不会默认批量低质量生成"
+
+    - id: M7
+      name: "Prompt And Context Upgrade"
+      goal: "让 Codex 真正拿到足够上下文，提高每轮修复质量"
+      changes:
+        - "worker prompt 注入 acceptance criteria、verification plan、allowed paths、recent failures"
+        - "repair prompt 注入 gate logs、goal_satisfaction missing evidence、screenshots/tool outputs"
+        - "reviewer prompt 要求 structured finding lines"
+        - "记录 prompt version"
+      tests:
+        - "unit: prompt renderer includes criteria and failure evidence"
+        - "unit: sensitive content redaction preserved"
+      done_when:
+        - "每个 worker 明确知道目标、边界、验证方式和上轮失败原因"
+
+    - id: M8
+      name: "Web Console Goal Loop UX"
+      implementation_status: implemented
+      goal: "控制台让用户看懂为什么没满足目标、下一步会怎么修"
+      changes:
+        - "Overview 显示 goal satisfaction verdict"
+        - "Evidence 页显示 criterion coverage"
+        - "Timeline 显示 iteration/replan/repair"
+        - "Action 支持 rerun satisfaction / rerun tool checks"
+      implemented_artifacts:
+        - "ConsoleRunDetail.goal_loop"
+        - "ConsoleGoalLoopSummary"
+        - "Web tab: Goal Loop"
+        - "Web actions: rerun-tool-checks, rerun-satisfaction"
+      tests:
+        - "unit/integration web read service includes goal satisfaction"
+        - "web smoke includes new tabs/fields"
+        - "integration: rerun satisfaction writes 07_goal_satisfaction.yaml"
+        - "integration: rerun tool checks writes tool_runs/<tool-run-id>/tool_result.yaml"
+      done_when:
+        - "用户不用翻 YAML 就能看到目标闭环状态"
+
+    - id: M9
+      name: "Backend Capability Hardening"
+      implementation_status: implemented
+      goal: "真实后端能力和声明一致"
+      changes:
+        - "doctor 明确显示 codex_exec limitations"
+        - "SDK 后端保持实验标记或真正实现"
+        - "usage、cancel、resume_thread 只在真实支持时声明"
+      implemented_artifacts:
+        - "BackendCapability.implemented"
+        - "BackendCapability.stability"
+        - "effective_backend_provider fallback for unimplemented codex_sdk"
+        - "CLI doctor: backend_implemented / backend_stability / backend_notes"
+        - "Web doctor: backend_capabilities / backend_implemented / backend_stability"
+        - "RepairService uses effective backend capability before writing resume_thread_id"
+      tests:
+        - "unit backend capability truth table"
+        - "doctor output contract"
+        - "unit backend factory falls back from unimplemented codex_sdk"
+        - "unit repair service uses effective backend capability"
+        - "integration web doctor reports unimplemented sdk fallback"
+      done_when:
+        - "用户不会误以为当前后端支持尚未实现的高级能力"
+
+  recommended_execution_order:
+    first_batch:
+      - "M1 Verification Plan Artifact"
+      - "M2 Goal Satisfaction Report"
+      - "M3 Generalized Repair/Replan Loop"
+    second_batch:
+      - "M7 Prompt And Context Upgrade"
+      - "M4 Tool-Aware Verification Foundation"
+    third_batch:
+      - "M5 Browser Validation Runner"
+      - "M6 Image Asset Request Contract"
+      - "M8 Web Console Goal Loop UX"
+      - "M9 Backend Capability Hardening"
+    rationale: >
+      先把“目标是否满足”纳入最终状态，再做自动修复循环；
+      工具能力随后接入，否则浏览器和生图只会变成孤立功能。
+
+  first_implementation_slice:
+    name: "M1+M2 最小闭环"
+    scope:
+      - "新增 verification_plan artifact"
+      - "新增 goal_satisfaction artifact"
+      - "Evidence ready 必须要求 goal_satisfaction satisfied"
+      - "先用 deterministic/fake evaluator，后续再增强模型判断"
+    out_of_scope:
+      - "暂不接真实浏览器 runner"
+      - "暂不接真实生图 backend"
+      - "暂不改 parallel/worktree 行为"
+    acceptance_criteria:
+      - id: AC001
+        statement: "run 会生成 verification_plan 和 goal_satisfaction artifacts"
+        verification: automated
+      - id: AC002
+        statement: "质量门通过但 goal_satisfaction 未满足时，最终状态必须 human_required"
+        verification: automated
+      - id: AC003
+        statement: "Evidence report 清楚列出 missing evidence 或 unsatisfied criteria"
+        verification: automated
+      - id: AC004
+        statement: "旧有 fake demo 仍可通过，除非明确模拟目标不满足"
+        verification: automated
+
+  global_quality_gates:
+    commands:
+      - ".venv/bin/pytest -q"
+      - ".venv/bin/ruff check ."
+      - ".venv/bin/mypy src"
+      - ".venv/bin/coductor doctor"
+    rule: "每个 milestone 完成后必须至少运行相关测试；大阶段完成后运行全部 gate"
+
+  open_decisions:
+    - id: D001
+      question: "goal_satisfaction 初版用纯规则、模型 reviewer，还是二者结合？"
+      recommendation: "先规则保障状态正确，再加入模型判断作为 reviewer evidence"
+    - id: D002
+      question: "browser runner 是否引入 Playwright 依赖？"
+      recommendation: "先 command-backed，复用项目已有脚本；再评估一等 Playwright 依赖"
+    - id: D003
+      question: "image backend 是否由 Coductor 内置？"
+      recommendation: "先定义 artifact 和审批策略；真实 backend 作为后续可插拔 provider"
+    - id: D004
+      question: "artifact 编号是否立即重排？"
+      recommendation: "新增文件时保持兼容，可先用 03_verification_plan / 07_goal_satisfaction，迁移时提供旧 run 兼容读取"
+
+  success_definition: >
+    用户给出目标后，Coductor 不再只是跑一圈并声称完成；
+    它必须证明每条必需验收标准都有证据。若证据不足，系统能自动补实现、
+    补测试或补验证并再次检查；如果仍不能证明，则清楚说明为什么需要人工介入。
+  validation:
+    status: passed
+    report: "docs/superpowers/plans/2026-07-05-dogfood-goal-loop-validation.yaml"
+    dogfood_run_id: "run_01KWS7YENPKJB6TWSRAS6EPHGE"
+    summary: >
+      已使用隔离临时项目完成端到端 dogfood。验证链路覆盖
+      verification_plan、tool_result、goal_satisfaction、evidence bundle
+      和 Web Goal Loop API 投影。

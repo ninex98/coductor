@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from coductor.domain.enums import ExecutionMode
 
@@ -63,6 +63,49 @@ class QualityGateConfig(ConfigModel):
     timeout_seconds: int = 300
 
 
+class BrowserCheckConfig(ConfigModel):
+    url: str | None = None
+    static_path: str | None = None
+    start_command: str | None = None
+    ready_timeout_seconds: int = 30
+    viewport_width: int = 1280
+    viewport_height: int = 720
+    selectors: list[str] = Field(default_factory=lambda: ["body"])
+    text: list[str] = Field(default_factory=list)
+    fail_on_console_error: bool = True
+    screenshot: bool = True
+
+
+class ImageGenerationConfig(ConfigModel):
+    prompt: str = ""
+    purpose: str = ""
+    output_path: str = "assets/generated/image.png"
+    width: int = Field(default=1024, ge=1)
+    height: int = Field(default=1024, ge=1)
+    candidate_count: int = Field(default=1, ge=1)
+    batch_approved: bool = False
+    reference_paths: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def batch_requires_approval(self) -> ImageGenerationConfig:
+        if self.candidate_count > 1 and not self.batch_approved:
+            raise ValueError("batch image requests require batch_approved=true")
+        return self
+
+
+class ToolCheckConfig(ConfigModel):
+    id: str
+    tool: str = "command"
+    command: str = ""
+    required: bool = True
+    timeout_seconds: int = 300
+    description: str = ""
+    criterion_ids: list[str] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+    browser: BrowserCheckConfig = Field(default_factory=BrowserCheckConfig)
+    image: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
+
+
 class BudgetConfig(ConfigModel):
     max_run_minutes: int = 45
     max_worker_turns: int = 8
@@ -82,6 +125,7 @@ class CoductorConfig(ConfigModel):
             QualityGateConfig(id="lint", command="ruff check .", timeout_seconds=120),
         ]
     )
+    tool_checks: list[ToolCheckConfig] = Field(default_factory=list)
     budgets: BudgetConfig = Field(default_factory=BudgetConfig)
 
     @classmethod

@@ -48,6 +48,9 @@ class ConsoleDoctorService:
             "codex_exec_bin": resolve_codex_bin(),
             "codex_sdk_available": sdk_available,
             "backend_capabilities": capability.model_dump(mode="json"),
+            "backend_implemented": capability.implemented,
+            "backend_stability": capability.stability,
+            "backend_notes": capability.notes,
             "permission_defaults": {
                 "network_access": config.permissions.network_access,
                 "allow_git_commit": config.permissions.allow_git_commit,
