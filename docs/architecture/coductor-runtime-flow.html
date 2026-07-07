@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1800, initial-scale=1" />
+    <title>Coductor 端到端运行流程</title>
+    <link rel="stylesheet" href="./diagram.css" />
+    <style>
+      .flow-panel {
+        margin-top: 38px;
+        padding: 34px 36px;
+      }
+
+      .runtime-flow {
+        --cols: 7;
+        margin-top: 30px;
+      }
+
+      .runtime-flow .card {
+        height: 118px;
+      }
+
+      .lower {
+        margin-top: 28px;
+        display: grid;
+        grid-template-columns: 1.05fr 1fr 1fr;
+        gap: 24px;
+      }
+
+      .repair-flow {
+        margin-top: 28px;
+        --cols: 4;
+      }
+
+      .mini-grid {
+        margin-top: 24px;
+        display: grid;
+        gap: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="board">
+      <header class="hero">
+        <div class="mark">→</div>
+        <div>
+          <p class="kicker">Runtime Flow</p>
+          <h1>Coductor 端到端运行流程</h1>
+        </div>
+        <div class="badge">测试通过之后，还要证明目标满足</div>
+      </header>
+
+      <section class="panel flow-panel">
+        <p class="kicker">Primary Path</p>
+        <h2 class="panel-title">主运行路径</h2>
+        <p class="panel-note">每一步写入 Artifact；下游只读取结构化事实。</p>
+        <div class="flow runtime-flow">
+          <div class="step card blue">
+            <h3>Goal</h3>
+            <p class="mono">00_goal</p>
+          </div>
+          <div class="step card green">
+            <h3>Spec</h3>
+            <p class="mono">02_spec</p>
+          </div>
+          <div class="step card green">
+            <h3>Verification Plan</h3>
+            <p class="mono">03_verification</p>
+          </div>
+          <div class="step card amber">
+            <h3>Execute</h3>
+            <p>worker_result + patch</p>
+          </div>
+          <div class="step card amber">
+            <h3>Gates + Tools</h3>
+            <p>tests, browser, image, command</p>
+          </div>
+          <div class="step card violet">
+            <h3>Satisfaction</h3>
+            <p class="mono">07_satisfaction</p>
+          </div>
+          <div class="step card violet">
+            <h3>Evidence</h3>
+            <p>review + bundle + report</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="lower">
+        <div class="panel panel-pad">
+          <p class="kicker">Why It Matters</p>
+          <h2 class="panel-title">测试通过 ≠ 目标满足</h2>
+          <p class="panel-note">Gate 只能证明命令通过。Goal Satisfaction 会逐条检查验收标准是否有证据。</p>
+          <div class="mini-grid">
+            <div class="decision amber">
+              <strong>Gate passed</strong>
+              <span>pytest、lint、build 或配置命令返回成功。</span>
+            </div>
+            <div class="decision violet">
+              <strong>Goal satisfied</strong>
+              <span>required criteria 都有 gate/tool/manual evidence 支撑。</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel panel-pad">
+          <p class="kicker">Repair Loop</p>
+          <h2 class="panel-title">不满足就修复或补证据</h2>
+          <p class="panel-note">失败原因会变成 repair_request，默认最多 2 次。</p>
+          <div class="flow repair-flow">
+            <div class="step card red compact-card">
+              <h3>Fail</h3>
+              <p>gate/tool</p>
+            </div>
+            <div class="step card warn compact-card">
+              <h3>Diagnose</h3>
+              <p>fingerprint</p>
+            </div>
+            <div class="step card warn compact-card">
+              <h3>Repair</h3>
+              <p>patch / evidence</p>
+            </div>
+            <div class="step card green compact-card">
+              <h3>Re-run</h3>
+              <p>verify again</p>
+            </div>
+          </div>
+          <div class="decision warn" style="margin-top: 22px">
+            <strong>边界</strong>
+            <span>重复失败、缺人工判断或达到上限时进入 human_required。</span>
+          </div>
+        </div>
+
+        <div class="panel panel-pad">
+          <p class="kicker">Web Goal Loop</p>
+          <h2 class="panel-title">控制台可重跑验证</h2>
+          <p class="panel-note">UI 只投影 Artifact，不替代事实源。</p>
+          <div class="mini-grid">
+            <div class="card amber">
+              <h3>rerun-tool-checks</h3>
+              <p>重写 tool_runs/*/tool_result.yaml</p>
+            </div>
+            <div class="card violet">
+              <h3>rerun-satisfaction</h3>
+              <p>重新评估目标满足度</p>
+            </div>
+            <div class="card">
+              <h3>Evidence / Release</h3>
+              <p>查看交付依据和 manifest</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </body>
+</html>

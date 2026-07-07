@@ -1,429 +1,176 @@
 {
   "schema_version": "1.0",
   "project": "Coductor",
+  "positioning": "Verified Codex Runs control plane",
   "source_basis": [
-    "docs/architecture/architecture_inventory.md",
-    "docs/architecture/diagram-style-guide.md",
-    "src/coductor/domain/enums.py",
     "src/coductor/workflow/stage_artifacts.py",
-    "src/coductor/config/models.py",
-    "src/coductor/backends/factory.py"
+    "src/coductor/workflow/graph.py",
+    "src/coductor/workflow/artifact_writer.py",
+    "src/coductor/services/workflow_verification_service.py",
+    "src/coductor/services/tool_verification_service.py",
+    "src/coductor/services/browser_validation_runner.py",
+    "src/coductor/services/image_asset_runner.py",
+    "src/coductor/services/evidence_service.py",
+    "src/coductor/web/static/index.html",
+    "src/coductor/web/control_service.py"
   ],
-  "global_principles": {
-    "must_show": [
-      "Coductor is a local deterministic AI Coding workflow engine",
-      "Mainline: Goal -> Inspect -> Spec -> Plan -> Execute -> Verify -> Repair -> Review -> Deliver",
-      "CLI and local Web Console as user entry points",
-      "RunService and LangGraph as the control and orchestration path",
-      "YAML Artifacts as stage handoff source of truth",
-      "SQLite as run index, event, checkpoint and lock storage",
-      "Quality loop: Gate, bounded Repair, independent Review, Evidence validation",
-      "Human interaction: approval, human_required, resume, verify/review rerun"
-    ],
-    "move_to_caption": [
-      "Full CLI command list",
-      "SQLite field-level schema",
-      "Full YAML schema fields",
-      "Internal service method names",
-      "GateRunner subprocess details",
-      "Detailed resume artifact reuse rules",
-      "Release manifest command contents"
-    ],
-    "do_not_show": [
-      "All Python files/classes as a dependency graph",
-      "All CLI commands connected to all services",
-      "All Artifact schema fields",
-      "Test file matrix",
-      "Capabilities not found in current code as implemented features",
-      "Any implication that Codex CLI directly emits Coductor's structured YAML facts"
-    ],
-    "implemented_capabilities": [
-      "CLI command surface",
-      "Local Web Console over existing services",
-      "LangGraph StateGraph orchestration",
-      "Pydantic v2 Artifact Envelope",
-      "YAML atomic write, content hash, revision history and lineage",
-      "SQLite runs, events, workflow_checkpoints and run_locks",
-      "Deterministic repository inspection, spec builder and planner",
-      "Solo, pipeline and parallel execution strategies",
-      "Fake backend and codex_exec backend",
-      "Quality gates, failure fingerprint, bounded repair, independent review, Evidence Bundle",
-      "Release manifest with local/manual commands only"
-    ],
-    "planned_or_partial": [
-      {
-        "name": "CodexSdkBackend",
-        "status": "partial_placeholder",
-        "display_rule": "low emphasis Planned placeholder; never draw as active main path"
-      },
-      {
-        "name": "Automatic PR creation or remote git write",
-        "status": "not_found_as_implemented",
-        "display_rule": "omit from diagrams unless explicitly listed as not implemented"
-      },
-      {
-        "name": "SQLAlchemy storage implementation",
-        "status": "not_found_as_implemented",
-        "display_rule": "omit; use SQLite stdlib storage in diagrams"
-      },
-      {
-        "name": "Web Console SSE",
-        "status": "not_found_as_implemented",
-        "display_rule": "omit; current web console is HTTP plus polling"
-      },
-      {
-        "name": "Strict unified status enum",
-        "status": "partial",
-        "display_rule": "show control strings separately from RunStatus enum"
-      }
-    ]
-  },
+  "mainline": [
+    "Goal",
+    "Spec",
+    "Verification Plan",
+    "Execute",
+    "Gates + Tool Checks",
+    "Goal Satisfaction",
+    "Repair / Review",
+    "Evidence"
+  ],
+  "must_show": [
+    "CLI and local Web Console enter the same service layer",
+    "RunService builds contextual LangGraph with thin nodes",
+    "YAML artifacts are formal handoff facts",
+    "SQLite stores run indexes, events, checkpoints and locks",
+    "03_verification_plan.yaml maps acceptance criteria to evidence paths",
+    "ToolVerificationService writes tool_runs/*/tool_request.yaml and tool_result.yaml",
+    "Browser validation and image asset request are tool evidence paths",
+    "07_goal_satisfaction.yaml evaluates each criterion against gate/tool/manual evidence",
+    "Bounded repair is used when gates, tool checks or goal satisfaction fail",
+    "Web Goal Loop exposes rerun-tool-checks and rerun-satisfaction",
+    "Evidence Bundle decides delivery readiness with gates, review, goal satisfaction and tool results"
+  ],
+  "move_to_caption": [
+    "Full CLI command list",
+    "Full YAML schema fields",
+    "SQLite field-level schema",
+    "Internal service method names",
+    "Gate subprocess details",
+    "Repair prompt details",
+    "Release manifest command contents"
+  ],
+  "do_not_show_as_implemented": [
+    "Automatic remote git push",
+    "Automatic PR creation",
+    "Automatic merge",
+    "Production secrets access",
+    "codex_sdk as the default implemented backend",
+    "Codex CLI directly writing Coductor structured YAML",
+    "SQLAlchemy storage replacing current sqlite3 storage",
+    "Web Console SSE or realtime push"
+  ],
   "diagrams": [
     {
-      "id": "diagram-1-system-overview",
-      "title": "Coductor 总体架构概览",
-      "purpose": "Explain Coductor's system boundary and the relationship between entry, orchestration, execution, quality, artifacts and persistence.",
-      "layout": "layered architecture cards with a central horizontal Goal-to-Deliver line",
-      "core_regions": [
-        {
-          "id": "entry",
-          "label": "用户入口",
-          "keywords": ["CLI", "Web Console", "Operator"],
-          "status": "implemented"
-        },
-        {
-          "id": "control_plane",
-          "label": "控制平面",
-          "keywords": ["RunService", "ReportService", "run locks"],
-          "status": "implemented"
-        },
-        {
-          "id": "orchestration",
-          "label": "LangGraph 编排",
-          "keywords": ["StateGraph", "WorkflowState", "checkpoint"],
-          "status": "implemented"
-        },
-        {
-          "id": "mainline",
-          "label": "核心主线",
-          "keywords": ["Goal", "Plan", "Evidence"],
-          "status": "implemented"
-        },
-        {
-          "id": "execution",
-          "label": "执行层",
-          "keywords": ["CodexExec", "FakeBackend", "target repo"],
-          "status": "implemented",
-          "planned_items": ["CodexSdkBackend placeholder"]
-        },
-        {
-          "id": "quality_loop",
-          "label": "质量闭环",
-          "keywords": ["Gate", "Repair", "Review"],
-          "status": "implemented"
-        },
-        {
-          "id": "artifact_layer",
-          "label": "Artifact 层",
-          "keywords": ["YAML", "revision", "lineage"],
-          "status": "implemented"
-        },
-        {
-          "id": "storage",
-          "label": "持久化层",
-          "keywords": ["SQLite", "events", "locks"],
-          "status": "implemented"
-        }
+      "id": "system-overview",
+      "title": "Coductor 系统架构总览",
+      "canonical_source": "docs/architecture/coductor-system-overview.html",
+      "export": "docs/architecture/exported/coductor-system-overview.png",
+      "purpose": "Explain the product boundary across entry, control plane, execution, verification, artifacts and persistence.",
+      "regions": [
+        "Entry: CLI, Local Web Console, controlled actions",
+        "Control: RunService, LangGraph, WorkflowState, SQLite locks",
+        "Execution: CodexExecBackend, FakeBackend, codex_sdk placeholder",
+        "Quality: Quality Gates, Tool Verification, Goal Satisfaction",
+        "Truth layer: YAML Artifacts, Tool Runs, SQLite, Target Repo"
       ],
-      "primary_flows": [
-        ["Operator", "CLI or Web Console"],
-        ["CLI or Web Console", "RunService"],
-        ["RunService", "LangGraph"],
-        ["LangGraph", "Goal -> Inspect -> Spec -> Plan -> Execute -> Verify -> Review -> Deliver"],
-        ["Execute", "Backend and target Git repository"],
-        ["Verify", "Repair loop when gates fail"],
-        ["Review", "Repair loop when blocking review is configured"],
-        ["Stages", "YAML Artifact run directory"],
-        ["RunService", "SQLite runs/events/checkpoints/locks"],
-        ["Evidence validation", "ready_for_human_review or human_required"]
-      ],
-      "omit_details": [
-        "Full CLI command list",
-        "All service method names",
-        "Full Artifact fields",
-        "SQLite table fields",
-        "All workflow node files",
-        "GateRunner subprocess flags",
-        "Release manifest git commands"
-      ],
-      "side_notes": [
-        "YAML Artifact = stage source of truth",
-        "SQLite = run index, events, checkpoints, locks",
-        "CodexExecBackend returns plain-text summaries; Coductor writes structured YAML",
-        "Release does not auto push or create PR",
-        "Planned capabilities use dashed or gray styling"
+      "primary_flow": [
+        "Goal",
+        "Spec",
+        "Verification Plan",
+        "Execute",
+        "Tool Checks",
+        "Satisfaction",
+        "Evidence"
       ]
     },
     {
-      "id": "diagram-2-runtime-flow",
+      "id": "runtime-flow",
       "title": "Coductor 端到端运行流程",
-      "purpose": "Show how a user goal becomes an Evidence Bundle, including approval, resume, repair and review branches.",
-      "layout": "horizontal mainline flow with side lanes for human interaction and repair loop",
-      "main_stages": [
+      "canonical_source": "docs/architecture/coductor-runtime-flow.html",
+      "export": "docs/architecture/exported/coductor-runtime-flow.png",
+      "purpose": "Show how a run becomes evidence-backed delivery, including tool checks, satisfaction evaluation, repair and human control.",
+      "stages": [
         {
           "stage": "collect_goal",
-          "display": "Goal",
+          "label": "Goal",
           "artifacts": ["00_goal.yaml"]
         },
         {
           "stage": "inspect_repository",
-          "display": "Inspect",
+          "label": "Inspect",
           "artifacts": ["01_repository_snapshot.yaml"]
         },
         {
           "stage": "draft_spec",
-          "display": "Spec",
+          "label": "Spec",
           "artifacts": ["02_spec.yaml"]
         },
         {
+          "stage": "create_verification_plan",
+          "label": "Verify Plan",
+          "artifacts": ["03_verification_plan.yaml"]
+        },
+        {
           "stage": "create_execution_plan",
-          "display": "Plan",
+          "label": "Exec Plan",
           "artifacts": ["03_execution_plan.yaml"]
         },
         {
-          "stage": "materialize_tasks_and_dispatch_tasks",
-          "display": "Execute",
-          "artifacts": [
-            "tasks/T###/task.yaml",
-            "tasks/T###/worker_request.yaml",
-            "tasks/T###/worker_result.yaml",
-            "tasks/T###/patch.diff"
-          ],
-          "visual_rule": "collapse materialize_tasks and dispatch_tasks into one Execute card"
-        },
-        {
-          "stage": "integrate_changes",
-          "display": "Integrate",
-          "artifacts": ["04_integration.yaml"]
+          "stage": "dispatch_tasks",
+          "label": "Execute",
+          "artifacts": ["tasks/*/worker_result.yaml", "tasks/*/patch.diff"]
         },
         {
           "stage": "run_quality_gates",
-          "display": "Verify",
-          "artifacts": ["05_gate_report.yaml"]
+          "label": "Gate + Tools",
+          "artifacts": ["05_gate_report.yaml", "tool_runs/*/tool_result.yaml"]
         },
         {
-          "stage": "repair_failure",
-          "display": "Repair",
-          "artifacts": [
-            "repairs/R###/repair_request.yaml",
-            "repairs/R###/repair_result.yaml",
-            "repairs/R###/repair_result.patch"
-          ],
-          "visual_rule": "show as loop branch, not as a required straight-line phase"
+          "stage": "evaluate_goal_satisfaction",
+          "label": "Satisfaction",
+          "artifacts": ["07_goal_satisfaction.yaml"]
         },
         {
-          "stage": "run_independent_review",
-          "display": "Review",
-          "artifacts": ["06_review.yaml"]
-        },
-        {
-          "stage": "prepare_evidence",
-          "display": "Deliver",
-          "artifacts": ["07_evidence.yaml", "delivery-report.md"]
-        },
-        {
-          "stage": "release_command",
-          "display": "Release",
-          "artifacts": ["08_release_manifest.yaml"],
-          "visual_rule": "show as post-delivery action, not automatic remote release"
+          "stage": "review_and_evidence",
+          "label": "Evidence",
+          "artifacts": ["06_review.yaml", "07_evidence.yaml"]
         }
       ],
       "branches": [
-        {
-          "id": "spec_approval",
-          "condition": "require_spec_approval",
-          "flow": ["Spec", "human_required", "approve", "resume", "Plan"]
-        },
-        {
-          "id": "plan_approval_or_invalid",
-          "condition": "plan invalid or parallel plan requires approval",
-          "flow": ["Plan", "human_required", "approve", "resume", "Execute"]
-        },
-        {
-          "id": "worker_failed",
-          "condition": "worker failed or path boundary violation",
-          "flow": ["Execute", "human_required"]
-        },
-        {
-          "id": "gate_repair",
-          "condition": "required gate failed and repair attempts remain",
-          "flow": ["Verify", "Repair", "Verify"]
-        },
-        {
-          "id": "gate_exhausted",
-          "condition": "required gate failed and repair limit reached",
-          "flow": ["Verify", "Deliver", "human_required if Evidence invalid"]
-        },
-        {
-          "id": "blocking_review_repair",
-          "condition": "blocking review and repair_after_blocking_review=true",
-          "flow": ["Review", "Repair", "Verify"]
-        },
-        {
-          "id": "evidence_valid",
-          "condition": "Evidence validation valid",
-          "flow": ["Deliver", "ready_for_human_review"]
-        },
-        {
-          "id": "evidence_invalid",
-          "condition": "Evidence validation invalid",
-          "flow": ["Deliver", "human_required"]
-        }
-      ],
-      "human_interactions": [
-        "human_required",
-        "approve",
-        "resume",
-        "verify/review rerun",
-        "pause/stop/status/explain as control actions"
-      ],
-      "omit_modules": [
-        "Backend Factory internals",
-        "SQLite table details",
-        "Artifact Envelope fields",
-        "Web Console API routes",
-        "Pydantic model list",
-        "Repository inspector scan details"
-      ],
-      "caption_notes": [
-        "Repair loop defaults to max_repair_attempts=2",
-        "Review is read-only",
-        "Evidence final_status decides ready_for_human_review vs human_required",
-        "Release manifest is generated by coductor release and contains local/manual commands"
+        "Spec or parallel plan approval -> human_required -> approve + resume",
+        "Gate/tool/satisfaction failure -> bounded repair -> rerun verification",
+        "Uncertain evidence or max repair attempts -> human_required",
+        "Evidence valid -> ready_for_human_review",
+        "Release command -> 08_release_manifest.yaml only"
       ]
     },
     {
-      "id": "diagram-3-artifact-state-flow",
-      "title": "Artifact / State 流转",
-      "purpose": "Explain how fixed YAML artifacts, run states, SQLite records and deterministic safeguards work together.",
-      "layout": "artifact chain in the center, state machine and SQLite lanes on the sides",
-      "fixed_artifact_chain": [
+      "id": "artifact-state-flow",
+      "title": "Coductor Artifact / State 流转",
+      "canonical_source": "docs/architecture/coductor-artifact-state-flow.html",
+      "export": "docs/architecture/exported/coductor-artifact-state-flow.png",
+      "purpose": "Show fixed YAML facts, tool evidence, repair evidence, run states, SQLite persistence and stale protection.",
+      "artifact_chain": [
         "00_goal.yaml",
         "01_repository_snapshot.yaml",
         "02_spec.yaml",
+        "03_verification_plan.yaml",
         "03_execution_plan.yaml",
         "tasks/T###/*",
         "04_integration.yaml",
         "05_gate_report.yaml",
+        "tool_runs/*",
+        "07_goal_satisfaction.yaml",
         "06_review.yaml",
         "07_evidence.yaml",
         "08_release_manifest.yaml"
       ],
-      "task_artifacts": [
-        "tasks/T###/task.yaml",
-        "tasks/T###/worker_request.yaml",
-        "tasks/T###/worker_result.yaml",
-        "tasks/T###/patch.diff"
-      ],
-      "repair_artifacts": [
-        "repairs/R###/repair_request.yaml",
-        "repairs/R###/repair_result.yaml",
-        "repairs/R###/repair_result.patch"
-      ],
-      "non_yaml_artifacts": [
-        "tasks/T###/patch.diff",
-        "repairs/R###/repair_result.patch",
-        "delivery-report.md",
-        "contracts/generated.schema.json"
-      ],
-      "state_machine": {
-        "run_status_enum": [
-          "created",
-          "running",
-          "human_required",
-          "ready_for_human_review",
-          "paused",
-          "stopped",
-          "failed"
-        ],
-        "control_status_strings": [
-          "approved",
-          "verification_requested",
-          "review_requested"
-        ],
-        "primary_transitions": [
-          ["created", "running"],
-          ["running", "human_required"],
-          ["human_required", "running"],
-          ["running", "ready_for_human_review"],
-          ["running", "paused"],
-          ["running", "stopped"],
-          ["running", "failed"]
-        ],
-        "caption_note": "control_status_strings are written by control surfaces and are not RunStatus enum members"
-      },
-      "sqlite_records": [
-        {
-          "table": "runs",
-          "visual_label": "run status + run_dir"
-        },
-        {
-          "table": "events",
-          "visual_label": "stage timeline"
-        },
-        {
-          "table": "workflow_checkpoints",
-          "visual_label": "WorkflowState JSON"
-        },
-        {
-          "table": "run_locks",
-          "visual_label": "resume/control lock"
-        }
-      ],
-      "deterministic_safeguards": [
-        "content_sha256",
-        "revision",
-        "history",
-        "inputs[] lineage",
-        "contract sha256",
-        "stale_artifacts",
-        "Evidence validation"
-      ],
-      "small_labels": [
-        "YAML source of truth",
-        "SQLite index only",
-        "max repair: 2",
-        "read-only review",
-        "local release commands",
-        "Planned"
-      ],
-      "move_to_caption": [
-        "Full Artifact field structure",
-        "Gate log file paths",
-        "Release manifest safety fields",
-        "Detailed resume reuse rules",
-        "Parallel worktree patch replay algorithm"
+      "compatibility_note": "03_* and 07_* each have two semantic files; current code reads fixed filenames.",
+      "run_states": [
+        "running",
+        "human_required",
+        "ready_for_human_review",
+        "paused",
+        "stopped",
+        "failed"
       ]
-    }
-  ],
-  "content_budgets": [
-    {
-      "diagram_id": "diagram-1-system-overview",
-      "max_main_nodes": "8 regions plus 1 mainline",
-      "max_main_edges": 10,
-      "max_side_notes": 5
-    },
-    {
-      "diagram_id": "diagram-2-runtime-flow",
-      "max_main_nodes": "10 stages plus 6 branches",
-      "max_main_edges": 18,
-      "max_side_notes": 6
-    },
-    {
-      "diagram_id": "diagram-3-artifact-state-flow",
-      "max_main_nodes": "12 artifact nodes plus 7 states",
-      "max_main_edges": 20,
-      "max_side_notes": 8
     }
   ]
 }

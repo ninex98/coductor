@@ -1,0 +1,67 @@
+schema_version: "1.0"
+artifact_type: coductor_documentation_refresh
+artifact_id: docs_readme_diagram_refresh_20260707
+status: implemented
+created_at: "2026-07-07T15:23:41+08:00"
+producer:
+  kind: assistant
+  name: codex
+inputs:
+  - path: "README.md"
+    artifact_type: documentation
+    status: stale_before_refresh
+  - path: "docs/architecture/diagram-content-model.md"
+    artifact_type: diagram_content_model
+    status: stale_before_refresh
+  - path: "docs/superpowers/plans/2026-07-05-goal-satisfaction-loop.yaml"
+    artifact_type: coductor_implementation_plan
+    status: validated
+  - path: "docs/superpowers/plans/2026-07-05-coductor-current-role-summary.yaml"
+    artifact_type: coductor_product_summary
+    status: accepted
+data:
+  title: "README 与架构图刷新"
+  objective: >
+    让 README、架构图和 diagram content model 与当前代码保持一致，
+    尤其是 Goal Satisfaction Loop、tool_runs 工具证据、Web Goal Loop、
+    browser runner、image asset request 和 backend capability hardening。
+  diagnosis:
+    stale_items:
+      - "README 仍以 Deterministic AI Coding Workflow Engine 为主定位，没有突出 Verified Codex Runs"
+      - "旧主线缺少 03_verification_plan.yaml、tool_runs/* 和 07_goal_satisfaction.yaml"
+      - "Web Console 描述缺少 Logs、Evidence、Goal Loop、Release 和 rerun actions"
+      - "Artifact layout 缺少 verification plan、tool_runs 和 goal_satisfaction"
+      - "架构图内容模型仍将 Verify/Repair 作为主要闭环，没有表达目标满足判断"
+    diagram_feedback:
+      - "SVG 版信息密度过高，出现元素越界和内容裁切"
+      - "AI 位图生图不适合当前场景，因为中文标签、文件名和代码事实需要精确且可编辑"
+      - "最佳实践调整为 HTML/CSS canonical 图源，浏览器真实渲染后导出 PNG"
+  changes:
+    readme:
+      - "更新产品定位为 Verified Codex Runs"
+      - "新增目标满足循环、工具验证、浏览器验证、生图证据契约、Web Goal Loop 说明"
+      - "更新 artifact tree，补齐 03_verification_plan.yaml、tool_runs/*、07_goal_satisfaction.yaml"
+      - "明确测试通过不等于目标满足，完成状态由 Evidence Bundle 和相关证据决定"
+    diagrams:
+      - "新增 HTML/CSS canonical 图源，避免 SVG 手工布局造成边界溢出"
+      - "新增 docs/architecture/generate_diagrams.py，从 HTML/CSS 导出 PNG"
+      - "重生成 coductor-system-overview.html/png"
+      - "重生成 coductor-runtime-flow.html/png"
+      - "重生成 coductor-artifact-state-flow.html/png"
+      - "同步 diagram-1/2/3 兼容 SVG 别名"
+    architecture_docs:
+      - "更新 docs/architecture/README.md 的图说明与重新生成命令"
+      - "更新 diagram-content-model.md/json，移除旧主线并加入 Goal Satisfaction 与 Tool Verification"
+  canonical_diagrams:
+    - source: "docs/architecture/coductor-system-overview.html"
+      export: "docs/architecture/exported/coductor-system-overview.png"
+    - source: "docs/architecture/coductor-runtime-flow.html"
+      export: "docs/architecture/exported/coductor-runtime-flow.png"
+    - source: "docs/architecture/coductor-artifact-state-flow.html"
+      export: "docs/architecture/exported/coductor-artifact-state-flow.png"
+  verification:
+    planned:
+      - "XML parse all generated SVG files"
+      - "Check PNG dimensions remain 3600x2200"
+      - "Run markdown/YAML whitespace check via git diff --check"
+      - "Optionally run project lint if docs generator is committed Python code"

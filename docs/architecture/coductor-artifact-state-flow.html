@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1800, initial-scale=1" />
+    <title>Coductor Artifact / State 流转</title>
+    <link rel="stylesheet" href="./diagram.css" />
+    <style>
+      .artifact-main {
+        margin-top: 38px;
+        padding: 26px 34px;
+      }
+
+      .artifact-grid {
+        margin-top: 22px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .artifact-grid .card {
+        height: 74px;
+        padding: 14px 18px;
+      }
+
+      .artifact-grid .card h3 {
+        font-size: 16px;
+      }
+
+      .artifact-grid .card p {
+        margin-top: 5px;
+        font-size: 12px;
+      }
+
+      .support {
+        margin-top: 28px;
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 24px;
+      }
+
+      .state-grid {
+        margin-top: 22px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="board">
+      <header class="hero">
+        <div class="mark">→</div>
+        <div>
+          <p class="kicker">Artifact / State</p>
+          <h1>Coductor Artifact / State 流转</h1>
+        </div>
+        <div class="badge">下游事实来源是 YAML Artifact，不是自由文本</div>
+      </header>
+
+      <section class="panel artifact-main">
+        <p class="kicker">Artifact Chain</p>
+        <h2 class="panel-title">固定 YAML 事实链</h2>
+        <p class="panel-note">图里只展示交接关键点；字段细节放在 YAML Contracts 文档。</p>
+        <div class="artifact-grid">
+          <div class="card blue">
+            <h3 class="mono">00_goal</h3>
+            <p>原始目标与约束</p>
+          </div>
+          <div class="card blue">
+            <h3 class="mono">01_snapshot</h3>
+            <p>仓库事实</p>
+          </div>
+          <div class="card green">
+            <h3 class="mono">02_spec</h3>
+            <p>验收标准</p>
+          </div>
+          <div class="card green">
+            <h3 class="mono">03_verification_plan</h3>
+            <p>证据路径</p>
+          </div>
+          <div class="card amber">
+            <h3 class="mono">03_execution_plan</h3>
+            <p>任务与边界</p>
+          </div>
+          <div class="card amber">
+            <h3 class="mono">tasks/T###</h3>
+            <p>worker request/result/patch</p>
+          </div>
+          <div class="card amber">
+            <h3 class="mono">05_gate_report</h3>
+            <p>质量门结果</p>
+          </div>
+          <div class="card violet">
+            <h3 class="mono">tool_runs/*</h3>
+            <p>工具请求与结果</p>
+          </div>
+          <div class="card violet">
+            <h3 class="mono">07_goal_satisfaction</h3>
+            <p>目标满足 verdict</p>
+          </div>
+          <div class="card amber">
+            <h3 class="mono">06_review</h3>
+            <p>独立审查</p>
+          </div>
+          <div class="card violet">
+            <h3 class="mono">07_evidence</h3>
+            <p>Evidence Bundle</p>
+          </div>
+          <div class="card">
+            <h3 class="mono">08_release_manifest</h3>
+            <p>人工 release 交接</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="support">
+        <div class="panel panel-pad">
+          <p class="kicker">Repair Evidence</p>
+          <h2 class="panel-title">修复证据链</h2>
+          <p class="panel-note">不满足时写入 repairs/R###，再回到验证。</p>
+          <div class="grid" style="margin-top: 22px">
+            <div class="card warn">
+              <h3 class="mono">repair_request.yaml</h3>
+              <p>失败指纹、缺失 criteria、缺失 evidence</p>
+            </div>
+            <div class="card warn">
+              <h3 class="mono">repair_result.yaml</h3>
+              <p>修复结果与 patch evidence</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel panel-pad">
+          <p class="kicker">Run State</p>
+          <h2 class="panel-title">状态边界</h2>
+          <p class="panel-note">状态由质量门、目标满足、审查和 Evidence validation 决定。</p>
+          <div class="state-grid">
+            <div class="decision green">
+              <strong>running</strong>
+              <span>图执行中</span>
+            </div>
+            <div class="decision warn">
+              <strong>human_required</strong>
+              <span>需要人工介入</span>
+            </div>
+            <div class="decision green">
+              <strong>ready</strong>
+              <span>可交付审查</span>
+            </div>
+            <div class="decision red">
+              <strong>failed</strong>
+              <span>未处理错误</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel panel-pad">
+          <p class="kicker">Persistence</p>
+          <h2 class="panel-title">恢复与防覆盖</h2>
+          <p class="panel-note">SQLite 保存索引和锁；resume 会校验 Artifact lineage。</p>
+          <div class="grid" style="margin-top: 22px">
+            <div class="card cyan">
+              <h3>SQLite</h3>
+              <p>runs / events / checkpoints / run_locks</p>
+            </div>
+            <div class="card">
+              <h3>Stale Guard</h3>
+              <p>hash、revision、inputs 不匹配则 human_required</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </body>
+</html>

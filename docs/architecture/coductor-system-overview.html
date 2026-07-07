@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1800, initial-scale=1" />
+    <title>Coductor 系统架构总览</title>
+    <link rel="stylesheet" href="./diagram.css" />
+    <style>
+      .main {
+        margin-top: 38px;
+        display: grid;
+        grid-template-columns: 420px 1fr 420px;
+        gap: 26px;
+      }
+
+      .center-flow {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 22px;
+      }
+
+      .truth {
+        margin-top: 26px;
+        display: grid;
+        grid-template-columns: 1.2fr repeat(4, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .truth .card {
+        height: 92px;
+      }
+
+      .decision-row {
+        margin-top: 26px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 22px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="board">
+      <header class="hero">
+        <div class="mark">→</div>
+        <div>
+          <p class="kicker">Verified Codex Runs</p>
+          <h1>Coductor 系统架构总览</h1>
+        </div>
+        <div class="badge">Codex 负责实现；Coductor 负责证据与边界</div>
+      </header>
+
+      <section class="main">
+        <div class="panel panel-pad">
+          <p class="kicker">Entry</p>
+          <h2 class="panel-title">用户入口</h2>
+          <p class="panel-note">CLI 与本地 Web Console 都进入同一控制平面。</p>
+          <div class="grid" style="margin-top: 24px">
+            <div class="card blue">
+              <h3>CLI</h3>
+              <p>run / resume / verify / release</p>
+            </div>
+            <div class="card blue">
+              <h3>Web Console</h3>
+              <p>Overview / Evidence / Goal Loop</p>
+            </div>
+            <div class="card">
+              <h3>Controlled Actions</h3>
+              <p>approve / pause / stop / rerun</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel panel-pad">
+          <p class="kicker">Control Plane</p>
+          <h2 class="panel-title">目标满足闭环</h2>
+          <p class="panel-note">主线不再停在测试通过，而是继续检查目标是否有足够证据。</p>
+          <div class="center-flow">
+            <div class="card green">
+              <h3>RunService + LangGraph</h3>
+              <p>创建 run、恢复 checkpoint、驱动阶段</p>
+            </div>
+            <div class="card violet">
+              <h3>YAML Artifact Writer</h3>
+              <p>固定文件、hash、revision、lineage</p>
+            </div>
+            <div class="card green">
+              <h3>Verification Plan</h3>
+              <p class="mono">03_verification_plan.yaml</p>
+            </div>
+            <div class="card amber">
+              <h3>Tool Verification</h3>
+              <p>command / browser / image evidence</p>
+            </div>
+            <div class="card violet">
+              <h3>Goal Satisfaction</h3>
+              <p class="mono">07_goal_satisfaction.yaml</p>
+            </div>
+            <div class="card warn">
+              <h3>Bounded Repair</h3>
+              <p>不满足则补实现、补验证或进入人工介入</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel panel-pad">
+          <p class="kicker">Execution</p>
+          <h2 class="panel-title">执行后端</h2>
+          <p class="panel-note">后端可以是 Codex CLI 或 fake；结构化结果由本地写入。</p>
+          <div class="grid" style="margin-top: 24px">
+            <div class="card amber">
+              <h3>CodexExecBackend</h3>
+              <p>默认真实执行路径</p>
+            </div>
+            <div class="card amber">
+              <h3>FakeBackend</h3>
+              <p>离线 smoke 与测试</p>
+            </div>
+            <div class="card">
+              <h3>codex_sdk</h3>
+              <p>实验占位边界，不作为默认能力</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="truth">
+        <div class="panel panel-pad">
+          <p class="kicker">Truth Layer</p>
+          <h2 class="panel-title">事实层</h2>
+          <p class="panel-note">正式交接看 Artifact，不看自由文本总结。</p>
+        </div>
+        <div class="card violet">
+          <h3>YAML Artifacts</h3>
+          <p>stage handoff</p>
+        </div>
+        <div class="card violet">
+          <h3>Tool Runs</h3>
+          <p>request / result / logs</p>
+        </div>
+        <div class="card cyan">
+          <h3>SQLite</h3>
+          <p>runs / events / locks</p>
+        </div>
+        <div class="card">
+          <h3>Target Repo</h3>
+          <p>diff / patch evidence</p>
+        </div>
+      </section>
+
+      <section class="decision-row">
+        <div class="decision green">
+          <strong>ready_for_human_review</strong>
+          <span>gate、goal satisfaction、review、Evidence Bundle 都满足。</span>
+        </div>
+        <div class="decision warn">
+          <strong>human_required</strong>
+          <span>缺证据、不确定、重复失败、超出权限或达到修复上限。</span>
+        </div>
+        <div class="decision red">
+          <strong>不是 Better Codex</strong>
+          <span>它是 Codex run 的验证、恢复和交接控制层。</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

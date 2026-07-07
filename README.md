@@ -1,27 +1,13 @@
 # Coductor
 
-> Deterministic AI Coding Workflow Engine  
-> From goal to verified change.
+> Verified Codex Runs
+> From a natural-language goal to evidence-backed delivery.
 
-Coductor 是面向 AI Coding Agent 的确定性研发工作流引擎。它把一句自然语言研发目标，拆成可审计、可恢复、可验证的工程流程：模型负责理解、计划、编码与诊断；Coductor 负责阶段契约、质量门、Evidence、状态恢复和安全边界。
-
-## CLI 启动标识 / CLI Welcome Banner
-
-无参数执行 `coductor` 时，会先展示这组终端字母 Logo。它和 CLI 的定位保持一致：从目标进入，经过确定性流程，最终到达可验证交付。
+Coductor 是一个本地 AI Coding 工作流控制面。它不试图替代 Codex，也不是“更聪明的聊天客户端”；它的核心价值是把一次 Codex 研发任务变成可审计、可恢复、可验证的 run：目标被拆成验收标准，验证计划写入 YAML Artifact，质量门和工具证据被记录，目标满足度被独立评估，最终由 Evidence Bundle 决定是否进入交付状态。
 
 ```text
-   ______          __           __
-  / ____/___  ____/ /_  _______/ /_____  _____
- / /   / __ \/ __  / / / / ___/ __/ __ \/ ___/
-/ /___/ /_/ / /_/ / /_/ / /__/ /_/ /_/ / /
-\____/\____/\__,_/\__,_/\___/\__/\____/_/
-
-        AI Coding Workflow Engine
-        From goal to verified change.
-```
-
-```text
-Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evidence
+Goal -> Spec -> Verification Plan -> Execute -> Gates + Tool Checks
+     -> Goal Satisfaction -> Repair / Review -> Evidence
 ```
 
 ![Coductor system overview](docs/architecture/exported/coductor-system-overview.png)
@@ -37,33 +23,35 @@ Goal -> Inspect -> Spec -> Plan -> Execute -> Verify <-> Repair -> Review -> Evi
 
 ## 一句话理解
 
-Coductor 不是聊天客户端，也不是“多 Agent 数量展示器”。它更像一个本地研发流程控制台：每一步都落到固定 YAML Artifact，最终状态由质量门、独立审查和 Evidence Bundle 决定，而不是由某个 Agent 口头宣布完成。
+Coductor 的作用不是“跑一圈命令”，而是给 Codex run 加上目标满足闭环：如果测试通过但目标证据不足，它应该能写出缺什么、尝试修复或补证据，并在达到边界时进入 `human_required`，而不是口头宣布完成。
 
-## 当前完成度
+## 当前能力
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
 | CLI 主流程 | 已实现 | `init`、`run`、`dry-run`、`resume`、`status`、`report`、`artifacts`、`logs`、`explain` |
-| 本地 Web 控制台 | 已实现 | `coductor serve`，默认 `127.0.0.1:8765`，不需要额外 Web 运行依赖，不会替代 CLI 或固定 YAML Artifact |
+| 本地 Web 控制台 | 已实现 | `coductor serve`，默认 `127.0.0.1:8765`，提供 Overview、Artifacts、Timeline、Logs、Evidence、Goal Loop、Release、Doctor |
 | YAML Artifact 契约 | 已实现 | Envelope、hash、revision、lineage、history、stale 拦截、JSON Schema 生成 |
-| LangGraph 编排 | 已实现 | 当前主 workflow 使用 contextual LangGraph，`compile_workflow_graph` 支持 checkpointer，目标依赖包含 `langgraph-checkpoint-sqlite` |
-| 后端边界 | 已实现 | 默认真实路径为 `codex_exec`，离线测试用 `fake`，`codex_sdk` 保留为显式实验边界 |
-| 执行策略 | 已实现 | Solo First、自动 pipeline、显式 parallel 审批、worktree 隔离并发与串行 patch 回放 |
+| LangGraph 编排 | 已实现 | `RunService` 构建 contextual LangGraph，节点保持薄，副作用在 service 层 |
+| 目标满足循环 | 已实现 | `03_verification_plan.yaml` 规划证据，`07_goal_satisfaction.yaml` 判断每条验收标准是否满足 |
+| 工具验证 | 已实现 | `tool_runs/*/tool_request.yaml` 和 `tool_result.yaml` 记录 command、browser、image/image_generation 等工具证据 |
+| 浏览器验证 | 已实现 | 可生成 Playwright smoke runner，支持 URL/static path、selector/text、console error、screenshot |
+| 生图证据契约 | 已实现基础版 | 默认不批量生图；无生成后端时写出 image asset request 并进入 human/actionable evidence |
 | 质量闭环 | 已实现 | 质量门、失败指纹、最多 2 次修复循环、独立 Review、Evidence Bundle |
+| 后端边界 | 已实现/显式边界 | 默认真实路径为 `codex_exec`，离线测试用 `fake`，`codex_sdk` 仍是实验占位边界 |
 | 安全控制 | 已实现 | 默认关闭网络、Git push、PR、生产路径访问；控制命令有状态校验和 run lock |
-| 发布交接 | 已实现基础版 | `release` 生成 release manifest；远程推送和 PR 创建仍默认关闭 |
 
-## 适合解决什么问题
+## 它比直接用 Codex 多什么
 
-- 把“请修复这个功能并补测试”变成一条有产物、有质量门、有审查的可追溯流水线。
-- 在本地项目中留下完整 Evidence，而不是只保留一段聊天记录。
-- 让 `resume` 能从 checkpoint 和 Artifact 事实链恢复，并在上游内容变更时拒绝静默覆盖。
-- 用 `fake` backend 离线验证流程，用 `codex_exec` 接入真实 Codex CLI。
-- 在本地 Web 控制台里查看 run、Artifact、Timeline、Doctor，并执行受控的 approve / pause / stop / verify / review / release。
+- 目标不是只靠聊天上下文保存，而是落到 `00_goal.yaml`、`02_spec.yaml` 和验收标准。
+- 测试通过不等于目标满足；`07_goal_satisfaction.yaml` 会把每条标准映射到 gate、browser、image 或其他工具证据。
+- 不满足时会进入 bounded repair，默认最多 2 次；重复失败、缺人工输入或证据不确定时进入 `human_required`。
+- `resume` 基于 checkpoint 与 Artifact lineage 恢复，发现 stale 输入会拒绝静默覆盖。
+- Web Console 可以重跑工具检查和目标满足评估，而不是只能看一次性终端输出。
 
 ## 快速开始
 
-建议把 Coductor 作为独立 CLI 工具安装，然后在任意目标项目里使用它：
+建议把 Coductor 作为独立 CLI 工具安装，然后在任意目标项目里使用：
 
 ```bash
 pipx install -e /Users/ninex/Projects/hll-ecosystem/apps/coductor
@@ -71,13 +59,7 @@ coductor --help
 coductor --version
 ```
 
-`pipx install -e` 是 editable 安装。日常修改 Coductor 源码后通常不需要重装；如果改了依赖、入口脚本或 `pyproject.toml`，再执行：
-
-```bash
-pipx reinstall coductor
-```
-
-进入一个目标项目后：
+进入目标项目：
 
 ```bash
 cd /path/to/target-project
@@ -91,41 +73,9 @@ coductor explain <RUN_ID>
 coductor report <RUN_ID>
 ```
 
-一次稳定 fake backend demo 的关键结果通常长这样：
-
-```text
-状态: ready_for_human_review
-Final status: ready_for_human_review
-Required gates: 1/1 passed
-Evidence validation: valid
-```
-
-## 常用命令
-
-| 命令 | 用途 |
-| --- | --- |
-| `coductor init` | 在当前项目生成 `coductor.yaml` 和 `.coductor/` |
-| `coductor doctor` | 检查配置、后端能力、安全默认值和质量门 |
-| `coductor run "<goal>"` | 执行研发目标 |
-| `coductor run "<goal>" --dry-run` | 只生成前置计划，不派发 Worker |
-| `coductor resume <RUN_ID>` | 从 checkpoint 和 Artifact 链恢复 |
-| `coductor status <RUN_ID>` | 查看 run 状态 |
-| `coductor status <RUN_ID>` 的机器可读模式 | 输出结构化状态，包括 checkpoint 摘要 |
-| `coductor artifacts <RUN_ID>` | 查看固定 YAML Artifact 列表 |
-| `coductor logs <RUN_ID>` | 查看 SQLite event timeline |
-| `coductor logs <RUN_ID>` 的阶段过滤和机器可读模式 | 过滤阶段日志并输出结构化事件 |
-| `coductor explain <RUN_ID>` | 解释当前阶段、错误、stale Artifact 和下一步 |
-| `coductor verify <RUN_ID>` | 真实重跑质量门并更新 `05_gate_report.yaml` |
-| `coductor review <RUN_ID>` | 重跑独立审查和 Evidence 交付 |
-| `coductor approve <RUN_ID>` | 批准需要人工审批的 spec 或 parallel plan |
-| `coductor pause <RUN_ID>` / `coductor stop <RUN_ID>` | 暂停或停止允许状态中的 run |
-| `coductor release <RUN_ID>` | 生成 `08_release_manifest.yaml` |
-| `coductor serve` | 启动本地 Web 控制台 |
-
-## 本地 Web 控制台
+本地控制台：
 
 ```bash
-cd /path/to/target-project
 coductor serve
 ```
 
@@ -135,49 +85,51 @@ coductor serve
 http://127.0.0.1:8765
 ```
 
-常用参数：
+## 常用命令
 
-```bash
-coductor serve --host 127.0.0.1 --port 8765 --open
-coductor serve --host 0.0.0.0 --port 8765 --allow-lan
-```
+| 命令 | 用途 |
+| --- | --- |
+| `coductor run "<goal>"` | 执行研发目标 |
+| `coductor run "<goal>" --dry-run` | 只生成前置 Artifact，不派发 Worker |
+| `coductor resume <RUN_ID>` | 从 checkpoint 和 Artifact 链恢复 |
+| `coductor verify <RUN_ID>` | 重跑质量门并更新 `05_gate_report.yaml` |
+| `coductor review <RUN_ID>` | 重跑独立审查与 Evidence |
+| `coductor release <RUN_ID>` | 生成 `08_release_manifest.yaml` |
+| `coductor serve` | 启动本地 Web 控制台 |
+| `coductor doctor` | 检查配置、后端能力、安全默认值和质量门 |
 
-控制台提供四类核心视图：
-
-- Overview：run 状态、阶段、控制动作和摘要。
-- Artifacts：固定 YAML Artifact 列表与原文预览。
-- Timeline：SQLite event timeline。
-- Doctor：配置、后端能力、安全开关和质量门摘要。
-
-安全默认值：
-
-- 默认只监听 `127.0.0.1`；非 loopback host 必须显式传入 `--allow-lan`。
-- Web API 不提供任意 shell，不默认开启联网、Git push、PR 创建或 Secrets 读取。
-- Artifact 和日志预览限制在 run 目录内，拒绝路径穿越、绝对路径、软链接逃逸和不受支持的文件后缀。
-- `approve`、`pause`、`stop`、`resume`、`verify`、`review`、`release` 复用 CLI/service 的状态校验、SQLite run lock 和 stale lock 策略。
+Web 控制台的受控动作包括 `approve`、`pause`、`stop`、`resume`、`verify`、`review`、`release`、`rerun-tool-checks`、`rerun-satisfaction`。它不提供任意 shell，也不替代 YAML Artifact 作为下游事实来源。
 
 ## 运行产物
 
-Coductor 的下游事实来源是固定 YAML Artifact，而不是自由文本。一次 run 会写入：
+Coductor 的正式交接文件是固定 YAML Artifact。一次 run 可能写入：
 
 ```text
 .coductor/runs/<run-id>/
 ├── 00_goal.yaml
 ├── 01_repository_snapshot.yaml
 ├── 02_spec.yaml
+├── 03_verification_plan.yaml
 ├── 03_execution_plan.yaml
 ├── 04_integration.yaml
 ├── 05_gate_report.yaml
 ├── 06_review.yaml
+├── 07_goal_satisfaction.yaml
 ├── 07_evidence.yaml
 ├── 08_release_manifest.yaml
 ├── delivery-report.md
 ├── contracts/
-│   ├── contracts.yml
-│   └── generated.schema.json
 ├── history/
 ├── logs/
-├── repairs/
+├── repairs/R###/
+│   ├── repair_request.yaml
+│   ├── repair_result.yaml
+│   └── repair_result.patch
+├── tool_runs/<tool-run-id>/
+│   ├── tool_request.yaml
+│   ├── tool_result.yaml
+│   ├── stdout.log
+│   └── stderr.log
 └── tasks/<task-id>/
     ├── task.yaml
     ├── worker_request.yaml
@@ -185,40 +137,7 @@ Coductor 的下游事实来源是固定 YAML Artifact，而不是自由文本。
     └── patch.diff
 ```
 
-并非每个 run 都一定产生所有文件；例如未 release 的 run 不会有 `08_release_manifest.yaml`。
-
-## Artifact 示例
-
-```yaml
-schema_version: "1.0"
-artifact_type: execution_plan
-status: validated
-data:
-  strategy: pipeline
-  strategy_reasoning:
-    - "目标包含明确的先后依赖信号"
-  tasks:
-    - id: T001
-      task_type: contract_authoring
-      role: builder
-      depends_on: []
-    - id: T002
-      task_type: integrated_implementation
-      role: builder
-      depends_on:
-        - T001
-      allowed_paths:
-        - "src/**"
-        - "tests/**"
-```
-
-Artifact 规则：
-
-- 写入时先写临时文件，再 rename。
-- `metadata.content_sha256` 对规范 JSON 表示计算。
-- 每次修订复制到 `history/`，revision 单调递增。
-- `inputs` 记录上游 path、revision 和 sha256。
-- `resume` 会校验 Artifact hash、revision 和 contract hash；发现 stale 时进入 `human_required`。
+并非每个 run 都一定产生所有文件；例如未 release 的 run 不会有 `08_release_manifest.yaml`。当前为了兼容已有契约，`03_*` 和 `07_*` 各有两个语义文件，代码按固定文件名读取。
 
 ## 架构与执行流
 
@@ -226,60 +145,24 @@ Artifact 规则：
 
 核心边界：
 
-- 确定性程序负责 Git、文件扫描、Schema 校验、质量门、权限、哈希和 run 状态。
-- 模型负责语义理解、计划、编码、诊断与独立审查。
-- SQLite 保存 run/event 索引和恢复入口。
-- YAML Artifact 保存阶段交接事实。
-- `RunService` 构建 contextual LangGraph；节点保持薄，真实阶段副作用由 artifact writer、task execution、verification、repair、review delivery 等服务层执行。
-
-### Backend Boundary
-
-`src/coductor/backends/factory.py` 负责后端选择：
-
-- `codex_exec`：默认真实执行路径。
-- `fake`：测试和离线 smoke 的确定性实现。
-- `codex_sdk`：显式实验边界，不作为默认路径。
-
-`CodexExecBackend` 使用 list-based `subprocess.run()`，prompt 通过 stdin 传入，命令形态为：
-
-```bash
-codex exec --sandbox <mode> --skip-git-repo-check -
-```
-
-Codex CLI 可以返回普通文本摘要；`worker_result.yaml`、`review.yaml`、`gate_report.yaml`、`evidence.yaml` 等固定结构文件始终由 Coductor 本地写入。
-
-### 执行策略
-
-- 默认 Solo First：能由一个 Codex Thread 完成的任务，不启动多个写代码 Worker。
-- `auto` 检测明确先后依赖时生成顺序 pipeline。
-- 显式 `parallel` 需要通过写路径冲突、依赖图、contract handoff 和验收覆盖检查，并默认要求人工审批。
-- parallel 执行时，ready tasks 在隔离 git worktree 并发运行，主仓库只在批次完成后串行回放 patch。
-- 修复循环默认最多 2 次；同一失败指纹重复或达到上限后进入 `human_required`。
+- 确定性程序负责 Git、文件扫描、Schema 校验、质量门、权限、哈希、run lock 和状态恢复。
+- 模型/后端负责语义理解、计划、编码、诊断与审查建议。
+- `03_verification_plan.yaml` 把验收标准映射到 gate、tool check、manual 或 image asset evidence。
+- `WorkflowVerificationService` 在质量门后运行工具检查，写入 `tool_runs/*`。
+- `07_goal_satisfaction.yaml` 汇总 gate/tool/manual evidence，决定 satisfied、not_satisfied 或 uncertain。
+- Evidence Bundle 读取 review、goal satisfaction 和工具结果；完成状态由这些事实决定，而不是由 Agent 声称。
 
 ![Coductor artifact state flow](docs/architecture/exported/coductor-artifact-state-flow.png)
 
-## 项目结构
+## Backend Boundary
 
-```text
-src/coductor/
-├── artifacts/      # YAML Artifact schema, hash, serializer, repository
-├── backends/       # codex_exec, fake, codex_sdk boundary
-├── config/         # coductor.yaml discovery and parsing
-├── gates/          # quality gate runner and parsers
-├── repository/     # repo inspection, git and worktree helpers
-├── services/       # run, task execution, verification, repair, review, release
-├── storage/        # SQLite run/event storage
-├── web/            # dependency-light local console
-└── workflow/       # contextual LangGraph, nodes, checkpoint, stage artifacts
-```
+`src/coductor/backends/factory.py` 负责后端选择：
 
-更多文档：
+- `codex_exec`：默认真实执行路径，通过 `codex exec` 调用 Codex CLI。
+- `fake`：测试和离线 smoke 的确定性实现。
+- `codex_sdk`：显式实验边界；Doctor 会报告 `backend_implemented`、`backend_stability` 和说明，不把它伪装成默认能力。
 
-- [Workflow](docs/workflow.md)
-- [Architecture](docs/architecture.md)
-- [YAML Contracts](docs/yaml-contracts.md)
-- [Security](docs/security.md)
-- [Architecture Diagrams](docs/architecture/README.md)
+Codex CLI 可以返回普通文本摘要；`worker_result.yaml`、`review.yaml`、`gate_report.yaml`、`goal_satisfaction.yaml`、`evidence.yaml` 等结构化文件由 Coductor 本地写入。
 
 ## 本地开发
 
@@ -298,44 +181,32 @@ mypy src
 python scripts/generate_schemas.py
 ```
 
-建议提交前至少运行：
+重新生成架构图：
 
 ```bash
-pytest -q
-ruff check .
+.venv/bin/python docs/architecture/generate_diagrams.py --export-png
 ```
-
-## 安全边界
-
-Coductor 默认最小权限：
-
-- Planner、Inspector、Reviewer 默认只读。
-- Builder 和 Repairer 只允许 workspace-write。
-- 网络、Git push、PR 创建和生产路径访问默认关闭。
-- `.env*`、`**/secrets/**`、`**/production/**` 默认保护。
-- 质量门命令来自配置或明确的人类输入，并使用 `shlex.split()` 执行。
-- Evidence 必须包含通过的必需 Gate、无 blocking review 且存在 patch evidence，才允许进入 `ready_for_human_review`。
 
 ## Roadmap
 
-已完成：
-
-- Artifact lineage、revision、history、stale 检测。
-- 前半段和后半段 Artifact 复用。
-- `codex_exec` fallback、动态 pipeline、contract stale 检测。
-- parallel 预检、人工审批、worktree 并发执行与串行 patch 回放。
-- CLI 控制面、Web 控制台、真实 verify/review。
-- duration/token usage 记录、Evidence hardening、demo E2E。
-- run_dir 边界校验、敏感命令 redaction、local console 路径防逃逸。
+已完成的近期主线：Goal Satisfaction Loop、tool-aware verification、browser runner、image asset request contract、Web Goal Loop、Evidence hardening、backend capability hardening。
 
 后续重点：
 
-- 通知审批。
-- PR 创建。
-- 更多 Backend。
-- dispatch / repair 等执行型节点的幂等恢复扩展。
+- 让 spec/verification plan 从规则生成进一步走向更强的模型辅助。
+- 为常见前端、后端、数据任务沉淀 tool check 模板。
+- 改进 `human_required` UX，让“缺什么证据、下一步怎么补”更直接。
+- 更充分地在真实项目中 dogfood 长 run 和多轮 repair。
 
 危险能力仍默认关闭：不自动推送远程分支，不自动创建 PR，不读取生产秘密，不自动合并。
+
+更多文档：
+
+- [Workflow](docs/workflow.md)
+- [Architecture](docs/architecture.md)
+- [YAML Contracts](docs/yaml-contracts.md)
+- [Security](docs/security.md)
+- [Architecture Diagrams](docs/architecture/README.md)
 
 ---
 
@@ -343,48 +214,35 @@ Coductor 默认最小权限：
 
 ## What Is Coductor?
 
-Coductor is a deterministic workflow engine for AI-assisted software changes. It turns a natural-language engineering goal into a local, auditable workflow with structured artifacts, quality gates, independent review, resume semantics, and an evidence bundle.
+Coductor is a local control plane for verified Codex runs. It turns a natural-language engineering goal into structured YAML artifacts, quality gates, tool evidence, bounded repair, independent review, and an Evidence Bundle.
 
-It is not a chat client. It is a control plane around coding agents.
+It is not a chat client and not a replacement for Codex. It wraps coding agents with deterministic contracts and verification.
 
 ## Highlights
 
 | Area | Status | Notes |
 | --- | --- | --- |
 | CLI workflow | Shipped | `init`, `run`, `dry-run`, `resume`, `status`, `report`, `artifacts`, `logs`, `explain` |
-| Local console | Shipped | `coductor serve`, loopback-first, no extra web runtime dependency |
+| Local console | Shipped | Overview, Artifacts, Timeline, Logs, Evidence, Goal Loop, Release, Doctor |
 | YAML contracts | Shipped | Envelope, hash, revision, lineage, history, stale checks, generated JSON Schemas |
-| Orchestration | Shipped | contextual LangGraph with SQLite checkpoint support via `langgraph-checkpoint-sqlite` |
-| Backends | Shipped | `codex_exec` as the default real backend, `fake` for offline smoke tests, `codex_sdk` as an explicit experiment |
-| Execution strategy | Shipped | Solo First, auto pipeline, approved parallel execution through isolated worktrees |
-| Verification loop | Shipped | Quality gates, failure fingerprints, bounded repair, independent review, Evidence Bundle |
+| Goal satisfaction loop | Shipped | `03_verification_plan.yaml` plus `07_goal_satisfaction.yaml` |
+| Tool verification | Shipped | `tool_runs/*/tool_request.yaml` and `tool_result.yaml` for command/browser/image evidence |
+| Verification loop | Shipped | Gates, failure fingerprints, bounded repair, independent review, Evidence Bundle |
+| Backends | Shipped boundary | `codex_exec` default, `fake` for offline smoke, `codex_sdk` experimental |
 | Safety | Shipped | Network, git push, PR creation, and production paths are disabled by default |
 
 ## Quick Start
 
-Install Coductor once as an editable CLI tool:
-
 ```bash
 pipx install -e /Users/ninex/Projects/hll-ecosystem/apps/coductor
-coductor --help
-coductor --version
-```
-
-Then use it inside any target repository:
-
-```bash
 cd /path/to/target-project
 coductor init
 coductor doctor
 coductor run "fix the sample function and add tests" --backend fake
-coductor status <RUN_ID>
-coductor artifacts <RUN_ID>
-coductor logs <RUN_ID>
-coductor explain <RUN_ID>
 coductor report <RUN_ID>
 ```
 
-## Local Web Console
+Local console:
 
 ```bash
 coductor serve
@@ -396,8 +254,6 @@ Default URL:
 http://127.0.0.1:8765
 ```
 
-The console shows run overview, structured artifacts, event timeline, and doctor diagnostics. It reuses the same service-layer validation and locks as the CLI. It does not provide arbitrary shell execution and does not replace YAML artifacts as the downstream source of truth.
-
 ## Artifact Layout
 
 ```text
@@ -405,36 +261,28 @@ The console shows run overview, structured artifacts, event timeline, and doctor
 ├── 00_goal.yaml
 ├── 01_repository_snapshot.yaml
 ├── 02_spec.yaml
+├── 03_verification_plan.yaml
 ├── 03_execution_plan.yaml
 ├── 04_integration.yaml
 ├── 05_gate_report.yaml
 ├── 06_review.yaml
+├── 07_goal_satisfaction.yaml
 ├── 07_evidence.yaml
-├── delivery-report.md
-├── contracts/
-├── history/
-├── logs/
-├── repairs/
+├── 08_release_manifest.yaml
+├── repairs/R###/
+├── tool_runs/<tool-run-id>/
 └── tasks/<task-id>/
 ```
 
-Each stage reads upstream artifacts and writes the next fixed-structure YAML artifact. Resume validates hashes, revisions, and consumed contract hashes before continuing.
+Resume validates hashes, revisions, and input lineage before continuing.
 
 ## Architecture
 
-- Deterministic code handles Git, repository scanning, schema validation, quality gates, permissions, hashes, and run state.
-- AI backends handle semantic reasoning, planning, implementation, repair diagnosis, and independent review.
-- YAML artifacts are the handoff facts.
-- SQLite stores run indexes, event indexes, locks, and checkpoint entry points.
-- `RunService` builds the contextual LangGraph workflow; nodes stay thin and delegate side effects to service modules.
-
-`CodexExecBackend` runs the Codex CLI through:
-
-```bash
-codex exec --sandbox <mode> --skip-git-repo-check -
-```
-
-The external CLI can return plain text. Coductor writes `worker_result.yaml`, `review.yaml`, `gate_report.yaml`, and `evidence.yaml` locally using its own schemas.
+- Deterministic code handles Git, repository scanning, schema validation, quality gates, tool checks, permissions, hashes, locks, and run state.
+- Backends handle semantic reasoning, implementation, repair diagnosis, and review suggestions.
+- YAML artifacts are the handoff source of truth.
+- SQLite stores run indexes, events, locks, and checkpoint entry points.
+- Completion is decided by gates, tool evidence, goal satisfaction, review, and Evidence Bundle validation.
 
 ## Development
 
@@ -446,14 +294,6 @@ pytest -q
 ruff check .
 mypy src
 ```
-
-## Documentation
-
-- [Workflow](docs/workflow.md)
-- [Architecture](docs/architecture.md)
-- [YAML Contracts](docs/yaml-contracts.md)
-- [Security](docs/security.md)
-- [Architecture Diagrams](docs/architecture/README.md)
 
 ## License
 
