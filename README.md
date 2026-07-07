@@ -1,21 +1,45 @@
-# Coductor
+<div align="center">
 
-> Verified Codex Runs
-> From a natural-language goal to evidence-backed delivery.
+<h1>Coductor</h1>
 
-Coductor 是一个本地 AI Coding 工作流控制面。它不试图替代 Codex，也不是“更聪明的聊天客户端”；它的核心价值是把一次 Codex 研发任务变成可审计、可恢复、可验证的 run：目标被拆成验收标准，验证计划写入 YAML Artifact，质量门和工具证据被记录，目标满足度被独立评估，最终由 Evidence Bundle 决定是否进入交付状态。
+<p><strong>Verified Codex Runs</strong></p>
 
-```text
-Goal -> Spec -> Verification Plan -> Execute -> Gates + Tool Checks
-     -> Goal Satisfaction -> Repair / Review -> Evidence
-```
+<p>把一次 Codex 研发任务，变成有验收、有证据、有修复边界的本地工作流。</p>
 
-![Coductor system overview](docs/architecture/exported/coductor-system-overview.png)
+<p>
+  <code>Goal</code> -> <code>Spec</code> -> <code>Verification Plan</code> ->
+  <code>Gates + Tools</code> -> <code>Goal Satisfaction</code> -> <code>Evidence</code>
+</p>
 
-## 目录
+<p>
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#运行产物">运行产物</a> ·
+  <a href="#架构与执行流">架构与执行流</a> ·
+  <a href="#english-version">English</a>
+</p>
 
-- [中文版本](#中文版本)
-- [English Version](#english-version)
+</div>
+
+<p align="center">
+  <img src="docs/architecture/exported/coductor-system-overview.png" alt="Coductor system overview" />
+</p>
+
+<table>
+  <tr>
+    <td width="33%">
+      <strong>目标变成契约</strong><br />
+      自然语言目标会落到固定 YAML Artifact，而不是停留在聊天上下文里。
+    </td>
+    <td width="33%">
+      <strong>验证不止测试</strong><br />
+      Gate、browser、image、tool result 都可以成为目标满足证据。
+    </td>
+    <td width="33%">
+      <strong>完成由证据决定</strong><br />
+      Evidence Bundle 决定交付状态，Agent 不能只靠一句“完成了”收尾。
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -23,23 +47,25 @@ Goal -> Spec -> Verification Plan -> Execute -> Gates + Tool Checks
 
 ## 一句话理解
 
-Coductor 的作用不是“跑一圈命令”，而是给 Codex run 加上目标满足闭环：如果测试通过但目标证据不足，它应该能写出缺什么、尝试修复或补证据，并在达到边界时进入 `human_required`，而不是口头宣布完成。
+Coductor 不是“更聪明的 Codex 聊天框”，而是 Codex run 的验证控制层。
+
+它关注三件事：
+
+- 目标有没有被拆成可验证的验收标准。
+- 测试、浏览器、工具结果等证据是否足够证明目标满足。
+- 不满足时能否自动修复或明确进入 `human_required`。
 
 ## 当前能力
 
-| 模块 | 状态 | 说明 |
-| --- | --- | --- |
-| CLI 主流程 | 已实现 | `init`、`run`、`dry-run`、`resume`、`status`、`report`、`artifacts`、`logs`、`explain` |
-| 本地 Web 控制台 | 已实现 | `coductor serve`，默认 `127.0.0.1:8765`，提供 Overview、Artifacts、Timeline、Logs、Evidence、Goal Loop、Release、Doctor |
-| YAML Artifact 契约 | 已实现 | Envelope、hash、revision、lineage、history、stale 拦截、JSON Schema 生成 |
-| LangGraph 编排 | 已实现 | `RunService` 构建 contextual LangGraph，节点保持薄，副作用在 service 层 |
-| 目标满足循环 | 已实现 | `03_verification_plan.yaml` 规划证据，`07_goal_satisfaction.yaml` 判断每条验收标准是否满足 |
-| 工具验证 | 已实现 | `tool_runs/*/tool_request.yaml` 和 `tool_result.yaml` 记录 command、browser、image/image_generation 等工具证据 |
-| 浏览器验证 | 已实现 | 可生成 Playwright smoke runner，支持 URL/static path、selector/text、console error、screenshot |
-| 生图证据契约 | 已实现基础版 | 默认不批量生图；无生成后端时写出 image asset request 并进入 human/actionable evidence |
-| 质量闭环 | 已实现 | 质量门、失败指纹、最多 2 次修复循环、独立 Review、Evidence Bundle |
-| 后端边界 | 已实现/显式边界 | 默认真实路径为 `codex_exec`，离线测试用 `fake`，`codex_sdk` 仍是实验占位边界 |
-| 安全控制 | 已实现 | 默认关闭网络、Git push、PR、生产路径访问；控制命令有状态校验和 run lock |
+| 层次 | 已实现能力 |
+| --- | --- |
+| 入口与控制 | CLI 主流程、本地 Web Console、受控 approve/pause/stop/resume/retry 动作 |
+| Artifact 契约 | YAML Envelope、hash、revision、lineage、history、stale 拦截、JSON Schema |
+| 编排与执行 | contextual LangGraph、Solo First、pipeline/parallel 边界、`codex_exec` 与 `fake` backend |
+| 目标满足 | `03_verification_plan.yaml`、`tool_runs/*`、`07_goal_satisfaction.yaml` |
+| 工具证据 | command、browser smoke、screenshot、image asset request contract |
+| 质量闭环 | quality gates、失败指纹、最多 2 次修复循环、独立 Review、Evidence Bundle |
+| 安全默认值 | 默认关闭网络、Git push、PR、生产路径访问和 Secrets 读取 |
 
 ## 它比直接用 Codex 多什么
 
